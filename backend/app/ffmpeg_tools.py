@@ -6,7 +6,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from .config import settings
+from .fonts import resolve_font_file
 from .models import CropRect, ExportRequest, TextLayer
 
 
@@ -34,6 +34,23 @@ def run_checked(command: list[str], timeout: int | None = None) -> subprocess.Co
     return completed
 
 
+def _rotation_degrees(stream: dict) -> int:
+    candidates: list[object] = []
+    tags = stream.get("tags") or {}
+    candidates.append(tags.get("rotate"))
+    for side_data in stream.get("side_data_list") or []:
+        candidates.append(side_data.get("rotation"))
+
+    for raw_value in candidates:
+        if raw_value is None:
+            continue
+        try:
+            return int(round(float(str(raw_value).strip()))) % 360
+        except ValueError:
+            continue
+    return 0
+
+
 def probe_video(path: Path) -> tuple[float, int, int]:
     command = [
         "ffprobe",
@@ -41,8 +58,8 @@ def probe_video(path: Path) -> tuple[float, int, int]:
         "error",
         "-select_streams",
         "v:0",
-        "-show_entries",
-        "stream=width,height,duration:format=duration",
+        "-show_streams",
+        "-show_format",
         "-of",
         "json",
         str(path),
@@ -56,12 +73,14 @@ def probe_video(path: Path) -> tuple[float, int, int]:
     stream = streams[0]
     width = int(stream["width"])
     height = int(stream["height"])
+    rotation = _rotation_degrees(stream)
+    display_width, display_height = (height, width) if rotation in (90, 270) else (width, height)
     duration_raw = stream.get("duration") or payload.get("format", {}).get("duration")
     duration = float(duration_raw or 0)
     if duration <= 0:
         raise VideoProcessingError("video duration could not be detected")
 
-    return duration, width, height
+    return duration, display_width, display_height
 
 
 def validate_crop(crop: CropRect, video_width: int, video_height: int) -> None:
@@ -79,7 +98,7 @@ def _escape_filter_value(value: str) -> str:
     return f"'{escaped}'"
 
 
-def _drawtext_filter(text: TextLayer, text_file: Path) -> str:
+def _drawtext_filter(text: TextLayer, text_file: Path, font_file: str | None) -> str:
     if text.position == "top":
         y_expr = "14"
     elif text.position == "center":
@@ -96,8 +115,8 @@ def _drawtext_filter(text: TextLayer, text_file: Path) -> str:
         "x=(w-text_w)/2",
         f"y={y_expr}",
     ]
-    if settings.font_file:
-        options.append(f"fontfile={_escape_filter_value(settings.font_file)}")
+    if font_file:
+        options.append(f"fontfile={_escape_filter_value(font_file)}")
     if text.box:
         options.extend(
             [
@@ -128,9 +147,13 @@ def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, durati
 
     text_file: Path | None = None
     if request.text.enabled and request.text.content.strip():
+        try:
+            font_file = resolve_font_file(request.text.font_id)
+        except ValueError as exc:
+            raise VideoProcessingError(str(exc)) from exc
         text_file = output_dir / f"{output_path.stem}.txt"
         text_file.write_text(request.text.content.strip(), encoding="utf-8")
-        filters.append(_drawtext_filter(request.text, text_file))
+        filters.append(_drawtext_filter(request.text, text_file, font_file))
 
     video_chain = ",".join(filters)
     filter_complex = (

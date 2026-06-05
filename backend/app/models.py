@@ -37,6 +37,7 @@ class TextLayer(BaseModel):
     content: str = Field(default="", max_length=120)
     position: Literal["top", "center", "bottom"] = "bottom"
     font_size: int = Field(default=32, ge=12, le=96)
+    font_id: str | None = Field(default=None, max_length=255)
     color: str = "#ffffff"
     stroke_color: str = "#111111"
     box: bool = True
@@ -52,6 +53,14 @@ class TextLayer(BaseModel):
         if any(char not in allowed for char in value):
             raise ValueError("color must be a hex value")
         return value.lower()
+
+
+class FontInfo(BaseModel):
+    id: str
+    name: str
+    family: str
+    filename: str
+    url: str
 
 
 class ExportRequest(BaseModel):

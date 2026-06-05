@@ -10,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .ffmpeg_tools import VideoProcessingError, build_gif, validate_crop
-from .models import BilibiliRequest, ErrorResponse, ExportRequest, ExportResponse, VideoInfo
+from .fonts import font_media_type, get_font_file, list_fonts, save_fonts
+from .models import BilibiliRequest, ErrorResponse, ExportRequest, ExportResponse, FontInfo, VideoInfo
 from .storage import download_bilibili, get_video_file, get_video_metadata, save_upload
 
 
@@ -67,6 +68,32 @@ def video_file(video_id: str) -> FileResponse:
     except VideoProcessingError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path)
+
+
+@app.get("/api/fonts", response_model=list[FontInfo])
+def fonts() -> list[FontInfo]:
+    return list_fonts()
+
+
+@app.post(
+    "/api/fonts/upload",
+    response_model=list[FontInfo],
+    responses={400: {"model": ErrorResponse}},
+)
+async def upload_fonts(files: list[UploadFile] = File(...)) -> list[FontInfo]:
+    try:
+        return await save_fonts(files)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/fonts/{font_id}/file")
+def font_file(font_id: str) -> FileResponse:
+    try:
+        path = get_font_file(font_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type=font_media_type(path), filename=path.name)
 
 
 @app.post(

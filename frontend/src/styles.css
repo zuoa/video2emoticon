@@ -138,6 +138,7 @@ h2 {
 
 .wide-button,
 .primary-button,
+.small-button,
 .bv-row button,
 .download-link {
   align-items: center;
@@ -163,6 +164,7 @@ h2 {
 }
 
 .wide-button,
+.small-button,
 .download-link {
   background: var(--teal);
   color: white;
@@ -170,6 +172,7 @@ h2 {
 }
 
 .wide-button:hover:not(:disabled),
+.small-button:hover:not(:disabled),
 .download-link:hover {
   background: var(--teal-dark);
 }
@@ -179,8 +182,20 @@ h2 {
   color: var(--ink);
 }
 
-.wide-button.secondary:hover:not(:disabled) {
+.wide-button.secondary:hover:not(:disabled),
+.small-button.secondary:hover:not(:disabled) {
   background: #e4d5bf;
+}
+
+.small-button {
+  font-size: 13px;
+  min-height: 36px;
+  padding: 0 10px;
+}
+
+.small-button.secondary {
+  background: #efe5d5;
+  color: var(--ink);
 }
 
 .bv-row {
@@ -249,6 +264,24 @@ input[type="color"] {
 
 .field-grid.three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.font-actions {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.font-preview {
+  background: #fffaf0;
+  border: 1px dashed #c8bcaa;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.35;
+  min-height: 64px;
+  overflow-wrap: anywhere;
+  padding: 12px;
 }
 
 .switch-row {
@@ -328,7 +361,6 @@ input[type="color"] {
 }
 
 .crop-layer {
-  inset: 0;
   pointer-events: none;
   position: absolute;
 }
@@ -453,6 +485,11 @@ input[type="color"] {
 .error-box {
   background: #ffe7df;
   color: #9f2f1f;
+}
+
+.error-box.compact {
+  font-size: 12px;
+  padding: 8px 10px;
 }
 
 .download-link {

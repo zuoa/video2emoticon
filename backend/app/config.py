@@ -15,6 +15,7 @@ class Settings:
         self.downloads_dir = self.data_dir / "downloads"
         self.outputs_dir = self.data_dir / "outputs"
         self.cookies_dir = self.data_dir / "cookies"
+        self.fonts_dir = self.data_dir / "fonts"
         self.bilibili_cookies_file = os.getenv("BILIBILI_COOKIES_FILE") or os.getenv(
             "BILIBILI_COOKIE_FILE"
         )
@@ -37,6 +38,7 @@ class Settings:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.cookies_dir.mkdir(parents=True, exist_ok=True)
+        self.fonts_dir.mkdir(parents=True, exist_ok=True)
         self._write_bilibili_cookies_from_env()
 
     def prepare_bilibili_cookies_file(self) -> Path | None:

@@ -1,14 +1,14 @@
 services:
   app:
-    build: .
-    image: video2emoticon:local
+    image: ghcr.io/zuoa/video2emoticon:latest
     ports:
       - "8000:8000"
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/downloads:/data/downloads
       - ./data/outputs:/data/outputs
-      - ./cookies:/data/cookies:ro
+      - ./data/fonts:/data/fonts
+      - ./cookies:/data/cookies
     environment:
       DATA_DIR: /data
       # Optional raw browser Cookie header:

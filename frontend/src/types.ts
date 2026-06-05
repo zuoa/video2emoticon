@@ -20,11 +20,20 @@ export interface TextLayer {
   content: string;
   position: "top" | "center" | "bottom";
   font_size: number;
+  font_id: string | null;
   color: string;
   stroke_color: string;
   box: boolean;
   box_color: string;
   box_opacity: number;
+}
+
+export interface FontInfo {
+  id: string;
+  name: string;
+  family: string;
+  filename: string;
+  url: string;
 }
 
 export interface ExportResponse {

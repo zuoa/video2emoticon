@@ -27,7 +27,7 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 COPY backend /app/backend
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 
-RUN mkdir -p /data/uploads /data/downloads /data/outputs /data/cookies
+RUN mkdir -p /data/uploads /data/downloads /data/outputs /data/cookies /data/fonts
 
 EXPOSE 8000
 

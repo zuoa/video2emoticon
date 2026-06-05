@@ -23,8 +23,9 @@ docker run --rm -p 8000:8000 -v video2emoticon-data:/data video2emoticon
 也可以使用 Compose：
 
 ```bash
-mkdir -p data/uploads data/downloads data/outputs cookies
-docker compose up --build
+mkdir -p data/uploads data/downloads data/outputs data/fonts cookies
+docker compose pull
+docker compose up
 ```
 
 Compose 默认使用目录映射：
@@ -33,8 +34,11 @@ Compose 默认使用目录映射：
 ./data/uploads   -> /data/uploads
 ./data/downloads -> /data/downloads
 ./data/outputs   -> /data/outputs
+./data/fonts     -> /data/fonts
 ./cookies        -> /data/cookies
 ```
+
+字体文件可以通过页面上传，也可以直接放入 `data/fonts/` 后在页面点击刷新。支持 `.ttf`、`.otf`、`.ttc`、`.otc`。
 
 ## Bilibili Cookie
 
@@ -45,7 +49,7 @@ Bilibili 可能返回 `HTTP Error 412: Precondition Failed`，这通常需要带
 ```bash
 mkdir -p cookies
 # 将导出的 Bilibili cookies 保存为 cookies/bilibili.cookies.txt
-docker compose up --build
+docker compose up
 ```
 
 也可以直接传浏览器请求里的原始 `Cookie` header：
@@ -60,7 +64,7 @@ docker run --rm \
 
 还支持把 Netscape cookies 文件内容放到 `BILIBILI_COOKIES` 环境变量中，服务会写入 `/data/cookies/bilibili.cookies.txt` 后交给 `yt-dlp`。
 
-不要把 cookie 提交到 GitHub；`cookies/` 已加入 `.gitignore`。
+`yt-dlp` 会在读取 cookies 文件后写回更新后的 cookie jar，因此 Compose 里的 `cookies/` 挂载需要保持可写。不要把 cookie 提交到 GitHub；`cookies/` 已加入 `.gitignore`。
 
 ## 本地开发
 
@@ -113,6 +117,7 @@ docker run -p 8000:8000 -v video2emoticon-data:/data ghcr.io/<owner>/<repo>:late
 - `DATA_DIR`：运行时数据目录，默认 `/data`。
 - `FRONTEND_DIST`：前端静态文件目录，镜像内默认 `/app/frontend/dist`。
 - `FONT_FILE`：FFmpeg `drawtext` 使用的字体文件路径。
+- `/data/fonts`：页面可扫描的字体目录，用于文字层字体选择和预览。
 - `CORS_ORIGINS`：开发时允许的跨域来源，默认 `*`。
 - `BILIBILI_COOKIES_FILE`：Netscape 格式 Bilibili cookies 文件路径，推荐挂载到 `/data/cookies/bilibili.cookies.txt`。
 - `BILIBILI_COOKIE_HEADER`：浏览器请求里的原始 `Cookie` header，例如 `SESSDATA=...; bili_jct=...`。
