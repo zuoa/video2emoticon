@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    image: video2emoticon:local
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/uploads:/data/uploads
+      - ./data/downloads:/data/downloads
+      - ./data/outputs:/data/outputs
+      - ./cookies:/data/cookies:ro
+    environment:
+      DATA_DIR: /data
+      # Optional raw browser Cookie header:
+      # BILIBILI_COOKIE_HEADER: ${BILIBILI_COOKIE_HEADER:-}
+      BILIBILI_COOKIES_FILE: /data/cookies/bilibili.cookies.txt

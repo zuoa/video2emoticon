@@ -1,0 +1,12 @@
+.DS_Store
+data/
+cookies/
+frontend/dist/
+frontend/node_modules/
+backend/**/__pycache__/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+.venv/
+.pytest_cache/
+.idea
