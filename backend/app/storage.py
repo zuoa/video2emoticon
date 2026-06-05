@@ -148,6 +148,8 @@ def parse_bilibili_input(value: str) -> ParsedBilibiliInput:
 
     page_values = parse_qs(parsed.query).get("p")
     page = _parse_positive_page(page_values[0]) if page_values else None
+    if page_values and page is None:
+        raise VideoProcessingError("Bilibili URL 的 p 参数必须是正整数")
     return ParsedBilibiliInput(bv=match.group(1), page=page)
 
 

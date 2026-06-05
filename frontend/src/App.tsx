@@ -211,10 +211,15 @@ function parseBilibiliInput(value: string): ParsedBilibiliInput | null {
   if (!match) {
     return null;
   }
+  const rawPage = url.searchParams.get("p");
+  const page = parsePositivePage(rawPage);
+  if (rawPage !== null && page === null) {
+    return null;
+  }
 
   return {
     bv: match[1],
-    page: parsePositivePage(url.searchParams.get("p"))
+    page
   };
 }
 
