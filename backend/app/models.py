@@ -30,6 +30,7 @@ class BilibiliPageInfo(BaseModel):
     page: int = Field(ge=1)
     title: str
     duration: float | None = None
+    cid: int | None = Field(default=None, ge=1)
 
 
 class BilibiliPagesResponse(BaseModel):

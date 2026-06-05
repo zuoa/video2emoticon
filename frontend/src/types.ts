@@ -12,6 +12,7 @@ export interface BilibiliPageInfo {
   page: number;
   title: string;
   duration: number | null;
+  cid: number | null;
 }
 
 export interface BilibiliPagesResponse {

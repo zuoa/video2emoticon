@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import UploadFile
 
@@ -20,6 +21,7 @@ from .models import BilibiliPageInfo, BilibiliPagesResponse, SourceType, VideoIn
 
 BV_PATTERN = re.compile(r"BV[0-9A-Za-z]{10}")
 BILIBILI_CACHE_NAMESPACE = uuid.NAMESPACE_URL
+BILIBILI_CACHE_VERSION = 3
 _bilibili_download_locks: dict[str, threading.Lock] = {}
 _bilibili_download_locks_lock = threading.Lock()
 
@@ -202,8 +204,74 @@ def _optional_duration(value: object) -> float | None:
     return round(duration, 3) if duration > 0 else None
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _fetch_bilibili_pagelist(bv: str) -> list[BilibiliPageInfo]:
+    api_url = f"https://api.bilibili.com/x/player/pagelist?bvid={bv}&jsonp=jsonp"
+    request = Request(
+        api_url,
+        headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": f"https://www.bilibili.com/video/{bv}",
+        },
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return []
+
+    if payload.get("code") != 0:
+        return []
+
+    pages: list[BilibiliPageInfo] = []
+    for index, item in enumerate(payload.get("data") or [], start=1):
+        if not isinstance(item, dict):
+            continue
+        page = _optional_int(item.get("page")) or index
+        pages.append(
+            BilibiliPageInfo(
+                page=page,
+                title=_clean_page_title(item.get("part"), page),
+                duration=_optional_duration(item.get("duration")),
+                cid=_optional_int(item.get("cid")),
+            )
+        )
+    return sorted(pages, key=lambda item: item.page)
+
+
+def _find_bilibili_page(bv: str, page: int) -> BilibiliPageInfo | None:
+    pages = _fetch_bilibili_pagelist(bv)
+    if not pages:
+        return None
+    return next((item for item in pages if item.page == page), None)
+
+
+def _bilibili_page_url(bv: str, page: int, cid: int | None) -> str:
+    url = f"https://www.bilibili.com/video/{bv}?p={page}"
+    if cid:
+        url += f"&cid={cid}"
+    return url
+
+
 def _bilibili_cache_id(bv: str, page: int) -> str:
     return uuid.uuid5(BILIBILI_CACHE_NAMESPACE, f"video2emoticon:bilibili:{bv}:p{page}").hex
+
+
+def _bilibili_cache_metadata(bv: str, page: int) -> dict:
+    return {
+        "bilibili_cache_version": BILIBILI_CACHE_VERSION,
+        "bilibili_bv": bv,
+        "bilibili_page": page,
+    }
 
 
 def _bilibili_download_lock(video_id: str) -> threading.Lock:
@@ -231,7 +299,7 @@ def _cached_bilibili_info(video_id: str, filename: str, bv: str, page: int) -> V
         try:
             metadata = _read_metadata(metadata_path)
             if (
-                metadata.get("bilibili_cache_version") != 2
+                metadata.get("bilibili_cache_version") != BILIBILI_CACHE_VERSION
                 or metadata.get("bilibili_bv") != bv
                 or metadata.get("bilibili_page") != page
             ):
@@ -243,53 +311,62 @@ def _cached_bilibili_info(video_id: str, filename: str, bv: str, page: int) -> V
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
 
+    for source_path in _source_candidates(_video_dir(video_id, SourceType.bilibili)):
+        try:
+            info = _video_info_from_path(video_id, SourceType.bilibili, filename, source_path)
+        except Exception:
+            continue
+        _write_metadata(info, source_path, _bilibili_cache_metadata(bv, page))
+        return info
+
     return None
 
 
 def list_bilibili_pages(value: str, page: int | None = None) -> BilibiliPagesResponse:
     parsed_input = parse_bilibili_input(value)
     bv = parsed_input.bv
-    url = f"https://www.bilibili.com/video/{bv}"
-    command = [
-        "yt-dlp",
-        "--dump-single-json",
-        "--skip-download",
-        "--flat-playlist",
-        "--no-warnings",
-        *(_bilibili_auth_args()),
-        url,
-    ]
-
-    try:
-        completed = run_checked(command, timeout=120)
-    except VideoProcessingError as exc:
-        _raise_bilibili_download_error(exc)
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise VideoProcessingError("Bilibili page info could not be parsed") from exc
-
-    pages: list[BilibiliPageInfo] = []
-    entries = payload.get("entries") or []
-    for page, entry in enumerate(entries, start=1):
-        if not isinstance(entry, dict):
-            continue
-        pages.append(
-            BilibiliPageInfo(
-                page=page,
-                title=_clean_page_title(entry.get("title"), page),
-                duration=_optional_duration(entry.get("duration")),
-            )
-        )
-
+    pages = _fetch_bilibili_pagelist(bv)
     if not pages:
-        pages.append(
-            BilibiliPageInfo(
-                page=1,
-                title=_clean_page_title(payload.get("title"), 1),
-                duration=_optional_duration(payload.get("duration")),
+        url = f"https://www.bilibili.com/video/{bv}"
+        command = [
+            "yt-dlp",
+            "--dump-single-json",
+            "--skip-download",
+            "--flat-playlist",
+            "--no-warnings",
+            *(_bilibili_auth_args()),
+            url,
+        ]
+
+        try:
+            completed = run_checked(command, timeout=120)
+        except VideoProcessingError as exc:
+            _raise_bilibili_download_error(exc)
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise VideoProcessingError("Bilibili page info could not be parsed") from exc
+
+        entries = payload.get("entries") or []
+        for page_number, entry in enumerate(entries, start=1):
+            if not isinstance(entry, dict):
+                continue
+            pages.append(
+                BilibiliPageInfo(
+                    page=page_number,
+                    title=_clean_page_title(entry.get("title"), page_number),
+                    duration=_optional_duration(entry.get("duration")),
+                )
             )
-        )
+
+        if not pages:
+            pages.append(
+                BilibiliPageInfo(
+                    page=1,
+                    title=_clean_page_title(payload.get("title"), 1),
+                    duration=_optional_duration(payload.get("duration")),
+                )
+            )
 
     selected_page = page or parsed_input.page or 1
     if selected_page not in {item.page for item in pages}:
@@ -314,11 +391,17 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
         if cached_info:
             return cached_info
 
+        page_info = _find_bilibili_page(bv, selected_page)
+        if page_info is None:
+            pages = _fetch_bilibili_pagelist(bv)
+            if pages:
+                raise VideoProcessingError(f"Bilibili page P{selected_page} does not exist")
+
         shutil.rmtree(target_dir, ignore_errors=True)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         output_template = str(target_dir / "source.%(ext)s")
-        url = f"https://www.bilibili.com/video/{bv}"
+        url = _bilibili_page_url(bv, selected_page, page_info.cid if page_info else None)
         try:
             auth_args = _bilibili_auth_args()
         except VideoProcessingError as exc:
@@ -327,9 +410,7 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
 
         command = [
             "yt-dlp",
-            "--yes-playlist",
-            "--playlist-items",
-            str(selected_page),
+            "--no-playlist",
             "-f",
             "bestvideo+bestaudio/best",
             "--merge-output-format",
@@ -365,9 +446,9 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
             info,
             source_path,
             {
-                "bilibili_cache_version": 2,
-                "bilibili_bv": bv,
-                "bilibili_page": selected_page,
+                **_bilibili_cache_metadata(bv, selected_page),
+                "bilibili_cid": page_info.cid if page_info else None,
+                "bilibili_page_title": page_info.title if page_info else None,
             },
         )
         return info
