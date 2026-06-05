@@ -48,7 +48,7 @@ def _metadata_path(video_id: str, source_type: SourceType) -> Path:
     return _video_dir(video_id, source_type) / "meta.json"
 
 
-def _write_metadata(info: VideoInfo, source_path: Path) -> None:
+def _write_metadata(info: VideoInfo, source_path: Path, extra_metadata: dict | None = None) -> None:
     path = _metadata_path(info.id, info.source_type)
     path.parent.mkdir(parents=True, exist_ok=True)
     created_at = time.time()
@@ -56,6 +56,8 @@ def _write_metadata(info: VideoInfo, source_path: Path) -> None:
     payload["source_path"] = str(source_path)
     payload["created_at"] = created_at
     payload["last_used_at"] = created_at
+    if extra_metadata:
+        payload.update(extra_metadata)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -223,25 +225,23 @@ def _source_candidates(target_dir: Path) -> list[Path]:
     )
 
 
-def _cached_bilibili_info(video_id: str, filename: str) -> VideoInfo | None:
+def _cached_bilibili_info(video_id: str, filename: str, bv: str, page: int) -> VideoInfo | None:
     metadata_path = _metadata_path(video_id, SourceType.bilibili)
     if metadata_path.exists():
         try:
             metadata = _read_metadata(metadata_path)
+            if (
+                metadata.get("bilibili_cache_version") != 2
+                or metadata.get("bilibili_bv") != bv
+                or metadata.get("bilibili_page") != page
+            ):
+                return None
             source_path_raw = metadata.get("source_path")
             if source_path_raw and Path(source_path_raw).is_file():
                 _touch_metadata(metadata_path, metadata)
                 return VideoInfo.model_validate(metadata)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             pass
-
-    for source_path in _source_candidates(_video_dir(video_id, SourceType.bilibili)):
-        try:
-            info = _video_info_from_path(video_id, SourceType.bilibili, filename, source_path)
-        except Exception:
-            continue
-        _write_metadata(info, source_path)
-        return info
 
     return None
 
@@ -271,16 +271,9 @@ def list_bilibili_pages(value: str, page: int | None = None) -> BilibiliPagesRes
 
     pages: list[BilibiliPageInfo] = []
     entries = payload.get("entries") or []
-    for index, entry in enumerate(entries, start=1):
+    for page, entry in enumerate(entries, start=1):
         if not isinstance(entry, dict):
             continue
-        raw_page = entry.get("page") or entry.get("page_number") or index
-        try:
-            page = int(raw_page)
-        except (TypeError, ValueError):
-            page = index
-        if page < 1:
-            page = index
         pages.append(
             BilibiliPageInfo(
                 page=page,
@@ -317,7 +310,7 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
     target_dir = _video_dir(video_id, SourceType.bilibili)
 
     with _bilibili_download_lock(video_id):
-        cached_info = _cached_bilibili_info(video_id, filename)
+        cached_info = _cached_bilibili_info(video_id, filename, bv, selected_page)
         if cached_info:
             return cached_info
 
@@ -325,7 +318,7 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
         target_dir.mkdir(parents=True, exist_ok=True)
 
         output_template = str(target_dir / "source.%(ext)s")
-        url = f"https://www.bilibili.com/video/{bv}?p={selected_page}"
+        url = f"https://www.bilibili.com/video/{bv}"
         try:
             auth_args = _bilibili_auth_args()
         except VideoProcessingError as exc:
@@ -334,7 +327,9 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
 
         command = [
             "yt-dlp",
-            "--no-playlist",
+            "--yes-playlist",
+            "--playlist-items",
+            str(selected_page),
             "-f",
             "bestvideo+bestaudio/best",
             "--merge-output-format",
@@ -366,7 +361,15 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
             shutil.rmtree(target_dir, ignore_errors=True)
             raise
 
-        _write_metadata(info, source_path)
+        _write_metadata(
+            info,
+            source_path,
+            {
+                "bilibili_cache_version": 2,
+                "bilibili_bv": bv,
+                "bilibili_page": selected_page,
+            },
+        )
         return info
 
 
