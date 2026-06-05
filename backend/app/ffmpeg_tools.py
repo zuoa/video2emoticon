@@ -144,7 +144,10 @@ def _optimize_gif(path: Path) -> None:
 
 
 def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, duration: float) -> Path:
-    if request.end_time > duration + 0.05:
+    end_time = request.end_time
+    if end_time is None:
+        raise VideoProcessingError("duration or end_time is required")
+    if end_time > duration + 0.05:
         raise VideoProcessingError("time range exceeds video duration")
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -178,7 +181,7 @@ def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, durati
         "[v1][p]paletteuse=dither=bayer:bayer_scale=3"
     )
     loop_value = "0" if request.loop else "1"
-    clip_duration = request.end_time - request.start_time
+    clip_duration = end_time - request.start_time
 
     command = [
         "ffmpeg",

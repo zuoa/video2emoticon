@@ -10,7 +10,6 @@ import {
   Repeat,
   Scissors,
   SkipBack,
-  SkipForward,
   Type,
   Upload,
   Video
@@ -51,6 +50,7 @@ type DragMode = "create" | "move" | "n" | "s" | "e" | "w" | "ne" | "nw" | "se" |
 interface ClipRange {
   start: number;
   end: number;
+  duration: number;
 }
 
 interface DragState {
@@ -120,6 +120,10 @@ function formatTimeInput(value: number): string {
     return `${hours}:${String(minutes).padStart(2, "0")}:${secondsText}`;
   }
   return `${minutes}:${secondsText}`;
+}
+
+function formatSecondsInput(value: number): string {
+  return String(roundTime(Math.max(MIN_CLIP_DURATION, value)));
 }
 
 function parseTimeInput(value: string): number | null {
@@ -243,12 +247,12 @@ function normalizeStartTime(value: number, duration: number | undefined): number
   return roundTime(clamp(value, 0, maxStart));
 }
 
-function normalizeEndTime(value: number, duration: number | undefined): number {
+function normalizeClipDuration(value: number, start: number, duration: number | undefined): number {
   if (duration === undefined) {
     return roundTime(Math.max(MIN_CLIP_DURATION, value));
   }
-  const minEnd = Math.min(MIN_CLIP_DURATION, duration);
-  return roundTime(clamp(value, minEnd, duration));
+  const availableDuration = Math.max(MIN_CLIP_DURATION, duration - start);
+  return roundTime(clamp(value, MIN_CLIP_DURATION, availableDuration));
 }
 
 function formatSize(bytes: number): string {
@@ -280,9 +284,9 @@ export function App() {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [crop, setCrop] = useState<CropRect | null>(null);
   const [startTime, setStartTime] = useState(0);
-  const [endTime, setEndTime] = useState(3);
+  const [clipDuration, setClipDuration] = useState(3);
   const [startTimeInput, setStartTimeInput] = useState(formatTimeInput(0));
-  const [endTimeInput, setEndTimeInput] = useState(formatTimeInput(3));
+  const [clipDurationInput, setClipDurationInput] = useState(formatSecondsInput(3));
   const [currentTime, setCurrentTime] = useState(0);
   const [fps, setFps] = useState(12);
   const [outputWidthInput, setOutputWidthInput] = useState("");
@@ -309,10 +313,13 @@ export function App() {
   const clipPreviewRef = useRef<ClipRange | null>(null);
 
   const parsedStartInput = useMemo(() => parseTimeInput(startTimeInput), [startTimeInput]);
-  const parsedEndInput = useMemo(() => parseTimeInput(endTimeInput), [endTimeInput]);
+  const parsedClipDurationInput = useMemo(() => parseTimeInput(clipDurationInput), [clipDurationInput]);
   const normalizedStartInput =
     parsedStartInput === null ? null : normalizeStartTime(parsedStartInput, videoInfo?.duration);
-  const normalizedEndInput = parsedEndInput === null ? null : normalizeEndTime(parsedEndInput, videoInfo?.duration);
+  const normalizedClipDurationInput =
+    parsedClipDurationInput === null || normalizedStartInput === null
+      ? null
+      : normalizeClipDuration(parsedClipDurationInput, normalizedStartInput, videoInfo?.duration);
   const parsedOutputWidth = useMemo(() => parseOutputWidthInput(outputWidthInput), [outputWidthInput]);
   const outputWidthIsValid = parsedOutputWidth !== false;
   const parsedBilibiliInput = useMemo(() => parseBilibiliInput(bv), [bv]);
@@ -325,8 +332,7 @@ export function App() {
     videoInfo &&
       crop &&
       normalizedStartInput !== null &&
-      normalizedEndInput !== null &&
-      normalizedEndInput > normalizedStartInput &&
+      normalizedClipDurationInput !== null &&
       outputWidthIsValid &&
       !busy
   );
@@ -353,11 +359,11 @@ export function App() {
       return;
     }
     const nextStartTime = 0;
-    const nextEndTime = Math.min(3, Math.max(MIN_CLIP_DURATION, videoInfo.duration));
+    const nextClipDuration = Math.min(3, Math.max(MIN_CLIP_DURATION, videoInfo.duration));
     setStartTime(nextStartTime);
-    setEndTime(nextEndTime);
+    setClipDuration(nextClipDuration);
     setStartTimeInput(formatTimeInput(nextStartTime));
-    setEndTimeInput(formatTimeInput(nextEndTime));
+    setClipDurationInput(formatSecondsInput(nextClipDuration));
     setCurrentTime(0);
     clipPreviewRef.current = null;
     setCrop({
@@ -449,10 +455,8 @@ export function App() {
   const currentTimeLabel = useMemo(() => formatTimeInput(currentTime), [currentTime]);
   const durationLabel = useMemo(() => formatTimeInput(videoInfo?.duration ?? 0), [videoInfo?.duration]);
   const clipDurationLabel = useMemo(() => {
-    const previewStart = normalizedStartInput ?? startTime;
-    const previewEnd = normalizedEndInput ?? endTime;
-    return formatTimeInput(Math.max(0, previewEnd - previewStart));
-  }, [endTime, normalizedEndInput, normalizedStartInput, startTime]);
+    return formatTimeInput(normalizedClipDurationInput ?? clipDuration);
+  }, [clipDuration, normalizedClipDurationInput]);
   const effectiveOutputWidth = useMemo(() => {
     if (parsedOutputWidth !== null && parsedOutputWidth !== false) {
       return parsedOutputWidth;
@@ -783,27 +787,23 @@ export function App() {
 
   const commitClipInputs = useCallback((): ClipRange | null => {
     const nextStartRaw = parseTimeInput(startTimeInput);
-    const nextEndRaw = parseTimeInput(endTimeInput);
-    if (nextStartRaw === null || nextEndRaw === null) {
-      setError("时间格式请使用秒数、mm:ss 或 hh:mm:ss");
+    const nextDurationRaw = parseTimeInput(clipDurationInput);
+    if (nextStartRaw === null || nextDurationRaw === null) {
+      setError("开始时间或持续秒数格式不正确");
       return null;
     }
 
     const nextStart = normalizeStartTime(nextStartRaw, videoInfo?.duration);
-    const nextEnd = normalizeEndTime(nextEndRaw, videoInfo?.duration);
+    const nextDuration = normalizeClipDuration(nextDurationRaw, nextStart, videoInfo?.duration);
+    const nextEnd = roundTime(nextStart + nextDuration);
     setStartTime(nextStart);
-    setEndTime(nextEnd);
+    setClipDuration(nextDuration);
     setStartTimeInput(formatTimeInput(nextStart));
-    setEndTimeInput(formatTimeInput(nextEnd));
-
-    if (nextEnd <= nextStart) {
-      setError("结束时间必须晚于开始时间");
-      return null;
-    }
+    setClipDurationInput(formatSecondsInput(nextDuration));
 
     setError("");
-    return { start: nextStart, end: nextEnd };
-  }, [endTimeInput, startTimeInput, videoInfo?.duration]);
+    return { start: nextStart, end: nextEnd, duration: nextDuration };
+  }, [clipDurationInput, startTimeInput, videoInfo?.duration]);
 
   const setClipStartFromCurrent = () => {
     if (!videoInfo) {
@@ -811,32 +811,12 @@ export function App() {
     }
     const rawTime = videoRef.current?.currentTime ?? currentTime;
     const nextStart = normalizeStartTime(rawTime, videoInfo.duration);
+    const nextDuration = normalizeClipDuration(clipDuration, nextStart, videoInfo.duration);
     setStartTime(nextStart);
+    setClipDuration(nextDuration);
     setStartTimeInput(formatTimeInput(nextStart));
+    setClipDurationInput(formatSecondsInput(nextDuration));
     setError("");
-
-    if (endTime <= nextStart) {
-      const nextEnd = normalizeEndTime(nextStart + MIN_CLIP_DURATION, videoInfo.duration);
-      setEndTime(nextEnd);
-      setEndTimeInput(formatTimeInput(nextEnd));
-    }
-  };
-
-  const setClipEndFromCurrent = () => {
-    if (!videoInfo) {
-      return;
-    }
-    const rawTime = videoRef.current?.currentTime ?? currentTime;
-    const nextEnd = normalizeEndTime(rawTime, videoInfo.duration);
-    setEndTime(nextEnd);
-    setEndTimeInput(formatTimeInput(nextEnd));
-    setError("");
-
-    if (nextEnd <= startTime) {
-      const nextStart = normalizeStartTime(Math.max(0, nextEnd - MIN_CLIP_DURATION), videoInfo.duration);
-      setStartTime(nextStart);
-      setStartTimeInput(formatTimeInput(nextStart));
-    }
   };
 
   const seekVideo = (value: number) => {
@@ -909,7 +889,7 @@ export function App() {
         body: JSON.stringify({
           video_id: videoInfo.id,
           start_time: range.start,
-          end_time: range.end,
+          duration: range.duration,
           crop,
           output_width: parsedOutputWidth,
           fps,
@@ -1033,16 +1013,17 @@ export function App() {
                 />
               </label>
               <label>
-                结束
+                持续秒数
                 <input
                   className="time-input"
                   type="text"
-                  placeholder="0:03"
-                  value={endTimeInput}
+                  inputMode="decimal"
+                  placeholder="3"
+                  value={clipDurationInput}
                   onBlur={() => {
                     commitClipInputs();
                   }}
-                  onChange={(event) => setEndTimeInput(event.target.value)}
+                  onChange={(event) => setClipDurationInput(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.currentTarget.blur();
@@ -1081,10 +1062,6 @@ export function App() {
               <button className="small-button secondary" disabled={!videoInfo} onClick={setClipStartFromCurrent}>
                 <SkipBack size={16} />
                 设为开始
-              </button>
-              <button className="small-button secondary" disabled={!videoInfo} onClick={setClipEndFromCurrent}>
-                <SkipForward size={16} />
-                设为结束
               </button>
             </div>
             <button className="wide-button secondary" disabled={!videoInfo} onClick={playClip}>

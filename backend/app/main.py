@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
@@ -33,6 +35,7 @@ from .storage import (
 
 settings.ensure_dirs()
 
+logger = logging.getLogger(__name__)
 SOURCE_VIDEO_RETENTION_SECONDS = 24 * 60 * 60
 SOURCE_VIDEO_CLEANUP_INTERVAL_SECONDS = 60 * 60
 cleanup_task: asyncio.Task[None] | None = None
@@ -50,6 +53,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    issues = [
+        {
+            "loc": ".".join(str(part) for part in error.get("loc", [])),
+            "msg": error.get("msg", "invalid value"),
+            "type": error.get("type", "validation_error"),
+        }
+        for error in exc.errors()
+    ]
+    logger.warning("Request validation failed: path=%s errors=%s", request.url.path, issues)
+    detail = "; ".join(f"{issue['loc']}: {issue['msg']}" for issue in issues)
+    return JSONResponse(
+        status_code=400,
+        content={
+            "detail": f"请求参数无效: {detail}" if detail else "请求参数无效",
+            "errors": issues,
+        },
+    )
 
 
 async def cleanup_old_videos_loop() -> None:
