@@ -23,6 +23,19 @@ class VideoInfo(BaseModel):
 
 class BilibiliRequest(BaseModel):
     bv: str = Field(min_length=3, max_length=200)
+    page: int | None = Field(default=None, ge=1, le=9999)
+
+
+class BilibiliPageInfo(BaseModel):
+    page: int = Field(ge=1)
+    title: str
+    duration: float | None = None
+
+
+class BilibiliPagesResponse(BaseModel):
+    bv: str
+    selected_page: int = Field(ge=1)
+    pages: list[BilibiliPageInfo]
 
 
 class CropRect(BaseModel):
@@ -68,7 +81,9 @@ class ExportRequest(BaseModel):
     start_time: float = Field(ge=0)
     end_time: float = Field(gt=0)
     crop: CropRect
+    output_width: int | None = Field(default=None, gt=0)
     fps: int = Field(default=12, ge=6, le=24)
+    speed_factor: float = Field(default=1.0, ge=1 / 16, le=16)
     loop: bool = True
     text: TextLayer = Field(default_factory=TextLayer)
 

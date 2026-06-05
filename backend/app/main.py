@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -11,11 +12,30 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .ffmpeg_tools import VideoProcessingError, build_gif, validate_crop
 from .fonts import font_media_type, get_font_file, list_fonts, save_fonts
-from .models import BilibiliRequest, ErrorResponse, ExportRequest, ExportResponse, FontInfo, VideoInfo
-from .storage import download_bilibili, get_video_file, get_video_metadata, save_upload
+from .models import (
+    BilibiliPagesResponse,
+    BilibiliRequest,
+    ErrorResponse,
+    ExportRequest,
+    ExportResponse,
+    FontInfo,
+    VideoInfo,
+)
+from .storage import (
+    delete_old_videos,
+    download_bilibili,
+    get_video_file,
+    get_video_metadata,
+    list_bilibili_pages,
+    save_upload,
+)
 
 
 settings.ensure_dirs()
+
+SOURCE_VIDEO_RETENTION_SECONDS = 24 * 60 * 60
+SOURCE_VIDEO_CLEANUP_INTERVAL_SECONDS = 60 * 60
+cleanup_task: asyncio.Task[None] | None = None
 
 app = FastAPI(
     title="Video2Emoticon",
@@ -30,6 +50,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+async def cleanup_old_videos_loop() -> None:
+    while True:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(delete_old_videos, SOURCE_VIDEO_RETENTION_SECONDS)
+        await asyncio.sleep(SOURCE_VIDEO_CLEANUP_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def start_source_video_cleanup() -> None:
+    global cleanup_task
+    cleanup_task = asyncio.create_task(cleanup_old_videos_loop())
+
+
+@app.on_event("shutdown")
+async def stop_source_video_cleanup() -> None:
+    if cleanup_task is None:
+        return
+    cleanup_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await cleanup_task
 
 
 @app.get("/healthz")
@@ -50,13 +92,25 @@ async def upload_video(file: UploadFile = File(...)) -> VideoInfo:
 
 
 @app.post(
+    "/api/videos/bilibili/pages",
+    response_model=BilibiliPagesResponse,
+    responses={400: {"model": ErrorResponse}},
+)
+async def bilibili_video_pages(request: BilibiliRequest) -> BilibiliPagesResponse:
+    try:
+        return await asyncio.to_thread(list_bilibili_pages, request.bv, request.page)
+    except VideoProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post(
     "/api/videos/bilibili",
     response_model=VideoInfo,
     responses={400: {"model": ErrorResponse}},
 )
 async def bilibili_video(request: BilibiliRequest) -> VideoInfo:
     try:
-        return await asyncio.to_thread(download_bilibili, request.bv)
+        return await asyncio.to_thread(download_bilibili, request.bv, request.page)
     except VideoProcessingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -115,11 +169,12 @@ async def export_gif(request: ExportRequest) -> ExportResponse:
     except VideoProcessingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return ExportResponse(
+    response = ExportResponse(
         filename=output_path.name,
         download_url=f"/api/outputs/{output_path.name}",
         size_bytes=output_path.stat().st_size,
     )
+    return response
 
 
 @app.get("/api/outputs/{filename}")

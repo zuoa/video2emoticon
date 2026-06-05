@@ -8,6 +8,18 @@ export interface VideoInfo {
   preview_url: string;
 }
 
+export interface BilibiliPageInfo {
+  page: number;
+  title: string;
+  duration: number | null;
+}
+
+export interface BilibiliPagesResponse {
+  bv: string;
+  selected_page: number;
+  pages: BilibiliPageInfo[];
+}
+
 export interface CropRect {
   x: number;
   y: number;

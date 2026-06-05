@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -129,6 +130,19 @@ def _drawtext_filter(text: TextLayer, text_file: Path, font_file: str | None) ->
     return f"drawtext={':'.join(options)}"
 
 
+def _optimize_gif(path: Path) -> None:
+    if shutil.which("gifsicle") is None:
+        return
+
+    try:
+        run_checked(["gifsicle", "-O3", "--lossy=30", "-b", str(path)], timeout=120)
+    except VideoProcessingError:
+        try:
+            run_checked(["gifsicle", "-O3", "-b", str(path)], timeout=120)
+        except VideoProcessingError:
+            return
+
+
 def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, duration: float) -> Path:
     if request.end_time > duration + 0.05:
         raise VideoProcessingError("time range exceeds video duration")
@@ -138,12 +152,14 @@ def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, durati
     output_path = output_dir / output_name
 
     crop = request.crop
-    output_width = min(max(crop.width, 240), 480)
+    output_width = request.output_width or crop.width
     filters = [
         f"crop={crop.width}:{crop.height}:{crop.x}:{crop.y}",
         f"scale={output_width}:-1:flags=lanczos",
-        f"fps={request.fps}",
     ]
+    if not math.isclose(request.speed_factor, 1.0):
+        filters.append(f"setpts={1 / request.speed_factor:.8f}*PTS")
+    filters.append(f"fps={request.fps}")
 
     text_file: Path | None = None
     if request.text.enabled and request.text.content.strip():
@@ -185,4 +201,5 @@ def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, durati
         if text_file and text_file.exists():
             text_file.unlink()
 
+    _optimize_gif(output_path)
     return output_path

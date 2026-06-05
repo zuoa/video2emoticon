@@ -1,4 +1,5 @@
 import {
+  Clock3,
   Download,
   Film,
   FolderUp,
@@ -8,12 +9,23 @@ import {
   RefreshCw,
   Repeat,
   Scissors,
+  SkipBack,
+  SkipForward,
   Type,
   Upload,
   Video
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CropRect, ExportResponse, FontInfo, TextLayer, VideoInfo } from "./types";
+import type { CSSProperties } from "react";
+import type {
+  BilibiliPageInfo,
+  BilibiliPagesResponse,
+  CropRect,
+  ExportResponse,
+  FontInfo,
+  TextLayer,
+  VideoInfo
+} from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
@@ -30,7 +42,16 @@ const defaultText: TextLayer = {
   box_opacity: 0.45
 };
 
+const MIN_CLIP_DURATION = 0.1;
+const MIN_SPEED_LEVEL = -16;
+const MAX_SPEED_LEVEL = 16;
+
 type DragMode = "create" | "move" | "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+interface ClipRange {
+  start: number;
+  end: number;
+}
 
 interface DragState {
   mode: DragMode;
@@ -46,12 +67,183 @@ interface VideoFrame {
   height: number;
 }
 
+interface ParsedBilibiliInput {
+  bv: string;
+  page: number | null;
+}
+
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function hexToRgba(hex: string, opacity: number): string {
+  const normalized = hex.trim().replace("#", "");
+  const fullHex =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((char) => `${char}${char}`)
+          .join("")
+      : normalized;
+  const value = Number.parseInt(fullHex, 16);
+  if (Number.isNaN(value)) {
+    return `rgba(0, 0, 0, ${clamp(opacity, 0, 1)})`;
+  }
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${clamp(opacity, 0, 1)})`;
+}
+
+function roundTime(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function formatTimeInput(value: number): string {
+  const centiseconds = Math.round(Math.max(0, value) * 100);
+  const totalSeconds = Math.floor(centiseconds / 100);
+  const decimal = centiseconds % 100;
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  let secondsText = String(seconds).padStart(2, "0");
+
+  if (decimal > 0) {
+    secondsText += `.${String(decimal).padStart(2, "0").replace(/0$/, "")}`;
+  }
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${secondsText}`;
+  }
+  return `${minutes}:${secondsText}`;
+}
+
+function parseTimeInput(value: string): number | null {
+  const normalized = value.trim().replace(/：/g, ":");
+  if (!normalized) {
+    return null;
+  }
+
+  const parts = normalized.split(":").map((part) => part.trim());
+  const numberPattern = /^\d+(?:\.\d+)?$/;
+  if (parts.length > 3 || parts.some((part) => part === "")) {
+    return null;
+  }
+
+  if (parts.length === 1) {
+    return numberPattern.test(parts[0]) ? Number(parts[0]) : null;
+  }
+
+  if (!parts.slice(0, -1).every((part) => /^\d+$/.test(part)) || !numberPattern.test(parts[parts.length - 1])) {
+    return null;
+  }
+
+  const values = parts.map(Number);
+  const seconds = values[values.length - 1];
+  if (seconds >= 60) {
+    return null;
+  }
+
+  if (parts.length === 2) {
+    return values[0] * 60 + seconds;
+  }
+
+  const minutes = values[1];
+  if (minutes >= 60) {
+    return null;
+  }
+  return values[0] * 3600 + minutes * 60 + seconds;
+}
+
+function parseOutputWidthInput(value: string): number | null | false {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    return false;
+  }
+  const width = Number(trimmed);
+  return width > 0 ? width : false;
+}
+
+function parsePositivePage(value: string | null): number | null {
+  if (value === null || !/^\d+$/.test(value)) {
+    return null;
+  }
+  const page = Number(value);
+  return page >= 1 ? page : null;
+}
+
+function isBilibiliHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "bilibili.com" || host.endsWith(".bilibili.com");
+}
+
+function parseBilibiliInput(value: string): ParsedBilibiliInput | null {
+  const text = value.trim();
+  if (!text) {
+    return null;
+  }
+
+  if (/^BV[0-9A-Za-z]{10}$/.test(text)) {
+    return { bv: text, page: null };
+  }
+
+  const urlText =
+    !text.includes("://") && /^(?:[a-z0-9-]+\.)*bilibili\.com\//i.test(text) ? `https://${text}` : text;
+  let url: URL;
+  try {
+    url = new URL(urlText);
+  } catch {
+    return null;
+  }
+
+  if (!["http:", "https:"].includes(url.protocol) || !isBilibiliHost(url.hostname)) {
+    return null;
+  }
+
+  const match = url.pathname.match(/\/video\/(BV[0-9A-Za-z]{10})(?:\/|$)/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    bv: match[1],
+    page: parsePositivePage(url.searchParams.get("p"))
+  };
+}
+
+function formatBilibiliPageOption(page: BilibiliPageInfo): string {
+  const duration = page.duration ? ` · ${formatTimeInput(page.duration)}` : "";
+  return `P${page.page} · ${page.title}${duration}`;
+}
+
+function speedFactorFromLevel(level: number): number {
+  if (level === 0 || Math.abs(level) === 1) {
+    return 1;
+  }
+  return level > 0 ? level : 1 / Math.abs(level);
+}
+
+function normalizeStartTime(value: number, duration: number | undefined): number {
+  if (duration === undefined) {
+    return roundTime(Math.max(0, value));
+  }
+  const maxStart = Math.max(0, duration - Math.min(MIN_CLIP_DURATION, duration));
+  return roundTime(clamp(value, 0, maxStart));
+}
+
+function normalizeEndTime(value: number, duration: number | undefined): number {
+  if (duration === undefined) {
+    return roundTime(Math.max(MIN_CLIP_DURATION, value));
+  }
+  const minEnd = Math.min(MIN_CLIP_DURATION, duration);
+  return roundTime(clamp(value, minEnd, duration));
 }
 
 function formatSize(bytes: number): string {
@@ -69,16 +261,34 @@ async function readJson<T>(response: Response): Promise<T> {
   return payload as T;
 }
 
+function triggerDownload(response: ExportResponse): void {
+  const anchor = document.createElement("a");
+  anchor.href = apiUrl(response.download_url);
+  anchor.download = response.filename;
+  anchor.style.display = "none";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 export function App() {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [crop, setCrop] = useState<CropRect | null>(null);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(3);
+  const [startTimeInput, setStartTimeInput] = useState(formatTimeInput(0));
+  const [endTimeInput, setEndTimeInput] = useState(formatTimeInput(3));
+  const [currentTime, setCurrentTime] = useState(0);
   const [fps, setFps] = useState(12);
+  const [outputWidthInput, setOutputWidthInput] = useState("");
+  const [speedLevel, setSpeedLevel] = useState(0);
   const [loop, setLoop] = useState(true);
   const [text, setText] = useState<TextLayer>(defaultText);
   const [bv, setBv] = useState("");
-  const [busy, setBusy] = useState<"upload" | "download" | "export" | null>(null);
+  const [bilibiliPages, setBilibiliPages] = useState<BilibiliPagesResponse | null>(null);
+  const [bilibiliPage, setBilibiliPage] = useState(1);
+  const [bilibiliStatus, setBilibiliStatus] = useState("");
+  const [busy, setBusy] = useState<"upload" | "pages" | "download" | "export" | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResponse | null>(null);
   const [videoFrame, setVideoFrame] = useState<VideoFrame>({ left: 0, top: 0, width: 0, height: 0 });
@@ -91,8 +301,30 @@ export function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const clipPreviewRef = useRef<ClipRange | null>(null);
 
-  const canExport = Boolean(videoInfo && crop && endTime > startTime && !busy);
+  const parsedStartInput = useMemo(() => parseTimeInput(startTimeInput), [startTimeInput]);
+  const parsedEndInput = useMemo(() => parseTimeInput(endTimeInput), [endTimeInput]);
+  const normalizedStartInput =
+    parsedStartInput === null ? null : normalizeStartTime(parsedStartInput, videoInfo?.duration);
+  const normalizedEndInput = parsedEndInput === null ? null : normalizeEndTime(parsedEndInput, videoInfo?.duration);
+  const parsedOutputWidth = useMemo(() => parseOutputWidthInput(outputWidthInput), [outputWidthInput]);
+  const outputWidthIsValid = parsedOutputWidth !== false;
+  const parsedBilibiliInput = useMemo(() => parseBilibiliInput(bv), [bv]);
+  const inputBv = parsedBilibiliInput?.bv ?? null;
+  const availableBilibiliPages = useMemo(
+    () => (inputBv && bilibiliPages?.bv === inputBv ? bilibiliPages.pages : []),
+    [bilibiliPages, inputBv]
+  );
+  const canExport = Boolean(
+    videoInfo &&
+      crop &&
+      normalizedStartInput !== null &&
+      normalizedEndInput !== null &&
+      normalizedEndInput > normalizedStartInput &&
+      outputWidthIsValid &&
+      !busy
+  );
 
   const loadFonts = useCallback(async () => {
     setFontBusy("load");
@@ -115,8 +347,14 @@ export function App() {
     if (!videoInfo) {
       return;
     }
-    setStartTime(0);
-    setEndTime(Math.min(3, Math.max(0.1, videoInfo.duration)));
+    const nextStartTime = 0;
+    const nextEndTime = Math.min(3, Math.max(MIN_CLIP_DURATION, videoInfo.duration));
+    setStartTime(nextStartTime);
+    setEndTime(nextEndTime);
+    setStartTimeInput(formatTimeInput(nextStartTime));
+    setEndTimeInput(formatTimeInput(nextEndTime));
+    setCurrentTime(0);
+    clipPreviewRef.current = null;
     setCrop({
       x: Math.round(videoInfo.width * 0.15),
       y: Math.round(videoInfo.height * 0.15),
@@ -202,6 +440,54 @@ export function App() {
     () => fonts.find((font) => font.id === text.font_id) ?? null,
     [fonts, text.font_id]
   );
+
+  const currentTimeLabel = useMemo(() => formatTimeInput(currentTime), [currentTime]);
+  const durationLabel = useMemo(() => formatTimeInput(videoInfo?.duration ?? 0), [videoInfo?.duration]);
+  const clipDurationLabel = useMemo(() => {
+    const previewStart = normalizedStartInput ?? startTime;
+    const previewEnd = normalizedEndInput ?? endTime;
+    return formatTimeInput(Math.max(0, previewEnd - previewStart));
+  }, [endTime, normalizedEndInput, normalizedStartInput, startTime]);
+  const effectiveOutputWidth = useMemo(() => {
+    if (parsedOutputWidth !== null && parsedOutputWidth !== false) {
+      return parsedOutputWidth;
+    }
+    return crop?.width ?? 0;
+  }, [crop?.width, parsedOutputWidth]);
+  const outputSizeLabel = useMemo(() => {
+    if (!crop || effectiveOutputWidth <= 0) {
+      return "未选择";
+    }
+    const outputHeight = Math.max(1, Math.round((effectiveOutputWidth / crop.width) * crop.height));
+    return `${effectiveOutputWidth} x ${outputHeight}`;
+  }, [crop, effectiveOutputWidth]);
+  const speedFactor = useMemo(() => speedFactorFromLevel(speedLevel), [speedLevel]);
+  const speedLabel = useMemo(() => {
+    if (speedLevel === 0 || Math.abs(speedLevel) === 1) {
+      return "1x 原速";
+    }
+    if (speedLevel > 0) {
+      return `${speedLevel}x 加速`;
+    }
+    return `${speedLevel}x 减速 · 实际 1/${Math.abs(speedLevel)}x`;
+  }, [speedLevel]);
+
+  const videoTextStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!cropStyle || effectiveOutputWidth <= 0) {
+      return undefined;
+    }
+    const previewScale = cropStyle.width / effectiveOutputWidth;
+    const fontSize = clamp(text.font_size * previewScale, 11, 96);
+    const strokeWidth = Math.max(1, Math.round(fontSize / 16));
+    return {
+      backgroundColor: text.box ? hexToRgba(text.box_color, text.box_opacity) : "transparent",
+      color: text.color,
+      fontFamily: selectedFont ? `"${selectedFont.family}", sans-serif` : undefined,
+      fontSize,
+      textShadow: `0 1px 1px ${text.stroke_color}, 1px 0 1px ${text.stroke_color}, 0 -1px 1px ${text.stroke_color}, -1px 0 1px ${text.stroke_color}`,
+      WebkitTextStroke: `${strokeWidth}px ${text.stroke_color}`
+    };
+  }, [cropStyle, effectiveOutputWidth, selectedFont, text]);
 
   const fontFaceStyles = useMemo(
     () =>
@@ -344,9 +630,22 @@ export function App() {
     }
   }, []);
 
+  const updateBvInput = (value: string) => {
+    const parsedInput = parseBilibiliInput(value);
+    setBv(value);
+    setBilibiliPages(null);
+    setBilibiliPage(parsedInput?.page ?? 1);
+    setBilibiliStatus(
+      parsedInput && value.trim() !== parsedInput.bv
+        ? `已识别 ${parsedInput.bv}${parsedInput.page ? ` P${parsedInput.page}` : ""}`
+        : ""
+    );
+  };
+
   const loadUploadedFile = async (file: File) => {
     setBusy("upload");
     setError("");
+    setBilibiliStatus("");
     const form = new FormData();
     form.append("file", file);
     try {
@@ -362,25 +661,89 @@ export function App() {
     }
   };
 
-  const loadBilibili = async () => {
-    if (!bv.trim()) {
-      setError("请输入 BV 号");
-      return;
+  const fetchBilibiliPages = async (
+    parsedInput: ParsedBilibiliInput
+  ): Promise<BilibiliPagesResponse | null> => {
+    if (!parsedInput.bv) {
+      setError("请输入 BV 号或合法的 Bilibili 视频地址");
+      return null;
     }
+    setBusy("pages");
+    setError("");
+    setBilibiliStatus("");
+    try {
+      const response = await fetch(apiUrl("/api/videos/bilibili/pages"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bv: parsedInput.bv, page: parsedInput.page })
+      }).then(readJson<BilibiliPagesResponse>);
+      setBv(response.bv);
+      setBilibiliPages(response);
+      const nextPage =
+        response.pages.some((page) => page.page === response.selected_page)
+          ? response.selected_page
+          : response.pages[0]?.page ?? 1;
+      setBilibiliPage(nextPage);
+      setBilibiliStatus(
+        response.pages.length > 1
+          ? `已识别 ${response.bv} 的 ${response.pages.length} 个分 P`
+          : `已识别 ${response.bv} P${nextPage}`
+      );
+      return response;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "分 P 读取失败");
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadBilibiliPage = async (parsedInput: ParsedBilibiliInput, page: number) => {
     setBusy("download");
     setError("");
+    setBilibiliStatus("");
     try {
       const info = await fetch(apiUrl("/api/videos/bilibili"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bv })
+        body: JSON.stringify({ bv: parsedInput.bv, page })
       }).then(readJson<VideoInfo>);
+      setBv(parsedInput.bv);
       setVideoInfo(info);
     } catch (err) {
       setError(err instanceof Error ? err.message : "下载失败");
     } finally {
       setBusy(null);
     }
+  };
+
+  const loadBilibili = async () => {
+    if (!bv.trim()) {
+      setError("请输入 BV 号或 Bilibili 视频地址");
+      return;
+    }
+    const parsedInput = parseBilibiliInput(bv);
+    if (!parsedInput) {
+      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
+      return;
+    }
+
+    if (availableBilibiliPages.length === 0) {
+      const response = await fetchBilibiliPages(parsedInput);
+      if (!response) {
+        return;
+      }
+      if (response.pages.length > 1 && parsedInput.page === null) {
+        return;
+      }
+      await downloadBilibiliPage({ bv: response.bv, page: response.selected_page }, response.selected_page);
+      return;
+    }
+
+    const selectedPage = availableBilibiliPages.some((page) => page.page === bilibiliPage)
+      ? bilibiliPage
+      : availableBilibiliPages[0]?.page ?? 1;
+    await downloadBilibiliPage(parsedInput, selectedPage);
   };
 
   const uploadFonts = async (fileList: FileList | null) => {
@@ -413,28 +776,122 @@ export function App() {
     }
   };
 
+  const commitClipInputs = useCallback((): ClipRange | null => {
+    const nextStartRaw = parseTimeInput(startTimeInput);
+    const nextEndRaw = parseTimeInput(endTimeInput);
+    if (nextStartRaw === null || nextEndRaw === null) {
+      setError("时间格式请使用秒数、mm:ss 或 hh:mm:ss");
+      return null;
+    }
+
+    const nextStart = normalizeStartTime(nextStartRaw, videoInfo?.duration);
+    const nextEnd = normalizeEndTime(nextEndRaw, videoInfo?.duration);
+    setStartTime(nextStart);
+    setEndTime(nextEnd);
+    setStartTimeInput(formatTimeInput(nextStart));
+    setEndTimeInput(formatTimeInput(nextEnd));
+
+    if (nextEnd <= nextStart) {
+      setError("结束时间必须晚于开始时间");
+      return null;
+    }
+
+    setError("");
+    return { start: nextStart, end: nextEnd };
+  }, [endTimeInput, startTimeInput, videoInfo?.duration]);
+
+  const setClipStartFromCurrent = () => {
+    if (!videoInfo) {
+      return;
+    }
+    const rawTime = videoRef.current?.currentTime ?? currentTime;
+    const nextStart = normalizeStartTime(rawTime, videoInfo.duration);
+    setStartTime(nextStart);
+    setStartTimeInput(formatTimeInput(nextStart));
+    setError("");
+
+    if (endTime <= nextStart) {
+      const nextEnd = normalizeEndTime(nextStart + MIN_CLIP_DURATION, videoInfo.duration);
+      setEndTime(nextEnd);
+      setEndTimeInput(formatTimeInput(nextEnd));
+    }
+  };
+
+  const setClipEndFromCurrent = () => {
+    if (!videoInfo) {
+      return;
+    }
+    const rawTime = videoRef.current?.currentTime ?? currentTime;
+    const nextEnd = normalizeEndTime(rawTime, videoInfo.duration);
+    setEndTime(nextEnd);
+    setEndTimeInput(formatTimeInput(nextEnd));
+    setError("");
+
+    if (nextEnd <= startTime) {
+      const nextStart = normalizeStartTime(Math.max(0, nextEnd - MIN_CLIP_DURATION), videoInfo.duration);
+      setStartTime(nextStart);
+      setStartTimeInput(formatTimeInput(nextStart));
+    }
+  };
+
+  const seekVideo = (value: number) => {
+    const nextTime = roundTime(value);
+    clipPreviewRef.current = null;
+    setCurrentTime(nextTime);
+    if (videoRef.current) {
+      videoRef.current.currentTime = nextTime;
+    }
+  };
+
+  const updateCurrentTime = useCallback(() => {
+    const element = videoRef.current;
+    if (element) {
+      setCurrentTime(roundTime(element.currentTime));
+    }
+  }, []);
+
   const playClip = () => {
     const element = videoRef.current;
     if (!element || !videoInfo) {
       return;
     }
-    element.currentTime = clamp(startTime, 0, videoInfo.duration);
+    const range = commitClipInputs();
+    if (!range) {
+      return;
+    }
+    clipPreviewRef.current = range;
+    element.currentTime = clamp(range.start, 0, videoInfo.duration);
     void element.play();
   };
 
   const onTimeUpdate = () => {
     const element = videoRef.current;
-    if (!element || endTime <= startTime) {
+    if (!element) {
       return;
     }
-    if (element.currentTime >= endTime) {
+    setCurrentTime(roundTime(element.currentTime));
+
+    const previewRange = clipPreviewRef.current;
+    if (!previewRange) {
+      return;
+    }
+    if (element.currentTime >= previewRange.end) {
       element.pause();
-      element.currentTime = startTime;
+      element.currentTime = previewRange.start;
+      clipPreviewRef.current = null;
     }
   };
 
   const exportGif = async () => {
     if (!videoInfo || !crop) {
+      return;
+    }
+    const range = commitClipInputs();
+    if (!range) {
+      return;
+    }
+    if (parsedOutputWidth === false) {
+      setError("输出宽度请输入正整数，或留空按框选宽度");
       return;
     }
     setBusy("export");
@@ -446,15 +903,18 @@ export function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           video_id: videoInfo.id,
-          start_time: startTime,
-          end_time: endTime,
+          start_time: range.start,
+          end_time: range.end,
           crop,
+          output_width: parsedOutputWidth,
           fps,
+          speed_factor: speedFactor,
           loop,
           text
         })
       }).then(readJson<ExportResponse>);
       setResult(response);
+      triggerDownload(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : "导出失败");
     } finally {
@@ -505,8 +965,8 @@ export function App() {
             <div className="bv-row">
               <input
                 value={bv}
-                placeholder="BV1..."
-                onChange={(event) => setBv(event.target.value)}
+                placeholder="BV1... 或 bilibili 视频 URL"
+                onChange={(event) => updateBvInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     void loadBilibili();
@@ -514,9 +974,33 @@ export function App() {
                 }}
               />
               <button disabled={Boolean(busy)} onClick={() => void loadBilibili()}>
-                {busy === "download" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+                {busy === "download" || busy === "pages" ? (
+                  <Loader2 className="spin" size={17} />
+                ) : (
+                  <Download size={17} />
+                )}
               </button>
             </div>
+            {availableBilibiliPages.length > 1 ? (
+              <label>
+                分 P
+                <select
+                  value={bilibiliPage}
+                  disabled={Boolean(busy)}
+                  onChange={(event) => {
+                    setBilibiliPage(Number(event.target.value));
+                    setBilibiliStatus("");
+                  }}
+                >
+                  {availableBilibiliPages.map((page) => (
+                    <option key={page.page} value={page.page}>
+                      {formatBilibiliPageOption(page)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {bilibiliStatus ? <div className="metric">{bilibiliStatus}</div> : null}
           </section>
 
           <section className="panel-section">
@@ -528,23 +1012,75 @@ export function App() {
               <label>
                 开始
                 <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={startTime}
-                  onChange={(event) => setStartTime(Number(event.target.value))}
+                  className="time-input"
+                  type="text"
+                  placeholder="0:00"
+                  value={startTimeInput}
+                  onBlur={() => {
+                    commitClipInputs();
+                  }}
+                  onChange={(event) => setStartTimeInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
                 />
               </label>
               <label>
                 结束
                 <input
-                  type="number"
-                  min="0.1"
-                  step="0.1"
-                  value={endTime}
-                  onChange={(event) => setEndTime(Number(event.target.value))}
+                  className="time-input"
+                  type="text"
+                  placeholder="0:03"
+                  value={endTimeInput}
+                  onBlur={() => {
+                    commitClipInputs();
+                  }}
+                  onChange={(event) => setEndTimeInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
                 />
               </label>
+            </div>
+            <div className="clip-readout">
+              <div>
+                <span>当前</span>
+                <strong>{currentTimeLabel}</strong>
+              </div>
+              <div>
+                <span>片段</span>
+                <strong>{clipDurationLabel}</strong>
+              </div>
+              <div>
+                <span>总长</span>
+                <strong>{durationLabel}</strong>
+              </div>
+            </div>
+            <label>
+              播放位置
+              <input
+                type="range"
+                min="0"
+                max={videoInfo?.duration ?? 0}
+                step="0.01"
+                value={currentTime}
+                disabled={!videoInfo}
+                onChange={(event) => seekVideo(Number(event.target.value))}
+              />
+            </label>
+            <div className="clip-actions">
+              <button className="small-button secondary" disabled={!videoInfo} onClick={setClipStartFromCurrent}>
+                <SkipBack size={16} />
+                设为开始
+              </button>
+              <button className="small-button secondary" disabled={!videoInfo} onClick={setClipEndFromCurrent}>
+                <SkipForward size={16} />
+                设为结束
+              </button>
             </div>
             <button className="wide-button secondary" disabled={!videoInfo} onClick={playClip}>
               <Play size={17} />
@@ -576,6 +1112,35 @@ export function App() {
               />
             </label>
             <div className="range-value">{fps} fps</div>
+            <label>
+              变速
+              <input
+                type="range"
+                min={MIN_SPEED_LEVEL}
+                max={MAX_SPEED_LEVEL}
+                step="1"
+                value={speedLevel}
+                onChange={(event) => setSpeedLevel(Number(event.target.value))}
+              />
+            </label>
+            <div className="range-scale">
+              <span>-16x</span>
+              <span>0x</span>
+              <span>16x</span>
+            </div>
+            <div className="range-value">{speedLabel}</div>
+            <label>
+              输出宽度
+              <input
+                type="number"
+                min="1"
+                inputMode="numeric"
+                placeholder={crop ? `留空 = ${crop.width}` : "留空 = 框选宽度"}
+                value={outputWidthInput}
+                onChange={(event) => setOutputWidthInput(event.target.value)}
+              />
+            </label>
+            <div className="range-value">{outputSizeLabel}</div>
             <label className="switch-row">
               <input type="checkbox" checked={loop} onChange={(event) => setLoop(event.target.checked)} />
               循环播放
@@ -720,6 +1285,16 @@ export function App() {
                   src={apiUrl(videoInfo.preview_url)}
                   controls
                   playsInline
+                  onEnded={() => {
+                    clipPreviewRef.current = null;
+                    updateCurrentTime();
+                  }}
+                  onLoadedMetadata={updateCurrentTime}
+                  onPause={() => {
+                    clipPreviewRef.current = null;
+                    updateCurrentTime();
+                  }}
+                  onSeeked={updateCurrentTime}
                   onTimeUpdate={onTimeUpdate}
                 />
                 {cropLayerStyle && cropStyle ? (
@@ -746,6 +1321,11 @@ export function App() {
                       style={cropStyle}
                       onPointerDown={(event) => startDrag(event, "move")}
                     >
+                      {text.enabled && text.content.trim() && videoTextStyle ? (
+                        <div className={`video-text-preview ${text.position}`} style={videoTextStyle}>
+                          {text.content.trim()}
+                        </div>
+                      ) : null}
                       {(["nw", "n", "ne", "e", "se", "s", "sw", "w"] as DragMode[]).map((handle) => (
                         <span
                           key={handle}
@@ -766,7 +1346,14 @@ export function App() {
           </div>
 
           <div className="status-row">
-            {error ? <div className="error-box">{error}</div> : <div className="hint-box">默认 12 fps</div>}
+            {error ? (
+              <div className="error-box">{error}</div>
+            ) : (
+              <div className="hint-box">
+                <Clock3 size={16} />
+                {currentTimeLabel} / {durationLabel}
+              </div>
+            )}
             {result ? (
               <a className="download-link" href={apiUrl(result.download_url)} download>
                 <Download size={18} />
@@ -776,6 +1363,7 @@ export function App() {
           </div>
         </section>
       </section>
+      <div className="made-by">Made with ❤️ by ZUOAJ</div>
     </main>
   );
 }

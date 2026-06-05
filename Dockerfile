@@ -19,6 +19,7 @@ RUN apt-get update \
         ca-certificates \
         ffmpeg \
         fonts-dejavu-core \
+        gifsicle \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt /app/backend/requirements.txt
