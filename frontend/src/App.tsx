@@ -382,7 +382,7 @@ function SiteFooter({ currentPage, navigateTo }: { currentPage: AppPage; navigat
         <span className="footer-mark">V2A</span>
         <div>
           <strong>Video to Any</strong>
-          <span>米色像素风视频工具箱</span>
+          <span>视频处理工具箱</span>
         </div>
       </div>
       <ToolNav currentPage={currentPage} navigateTo={navigateTo} />
@@ -577,7 +577,7 @@ function HomePage({ navigateTo }: { navigateTo: NavigateTo }) {
         <div className="home-hero">
           <div className="pixel-badge">VIDEO TO ANY</div>
           <h2>选择工具</h2>
-          <p>每个工具独立处理任务，共用同一套导航、缓存、输出和视觉风格。</p>
+          <p>每个工具独立处理任务，共用同一套导航、缓存和输出。</p>
         </div>
         <div className="tool-grid">
           <button className="tool-card" type="button" onClick={() => navigateTo("gif")}>
@@ -1844,227 +1844,231 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
       />
 
       <section className="audio-workbench">
-        <section className="panel-section audio-panel">
-          <div className="section-title">
-            <Music size={18} />
-            <h2>视频源</h2>
-          </div>
-          <div className="bv-row">
-            <input
-              value={bilibiliSource.bv}
-              placeholder="BV1... 或 bilibili 视频 URL"
-              onChange={(event) => bilibiliSource.updateInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void bilibiliSource.downloadSource();
-                }
-              }}
-            />
-            <button
-              type="button"
-              disabled={!bilibiliSource.canUse}
-              onClick={() => void bilibiliSource.refreshPages()}
-              aria-label="识别 Bilibili 分 P"
-            >
-              {busy === "pages" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
-              识别
-            </button>
-          </div>
-          {bilibiliSource.availablePages.length > 1 ? (
-            <label>
-              分 P
-              <select
-                value={bilibiliSource.page}
-                disabled={Boolean(busy)}
-                onChange={(event) => bilibiliSource.selectPage(Number(event.target.value))}
-              >
-                {bilibiliSource.availablePages.map((page) => (
-                  <option key={page.page} value={page.page}>
-                    {formatBilibiliPageOption(page)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {bilibiliSource.status ? <div className="metric">{bilibiliSource.status}</div> : null}
-          <button
-            className="wide-button"
-            type="button"
-            disabled={!canDownload}
-            onClick={() => void bilibiliSource.downloadSource()}
-          >
-            {busy === "download" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-            下载视频
-          </button>
-        </section>
-
-        <section className="panel-section audio-panel">
-          <div className="section-title">
-            <Play size={18} />
-            <h2>试听</h2>
-          </div>
-          {videoInfo ? (
-            <>
-              <video
-                ref={previewRef}
-                className="audio-preview-media"
-                src={apiUrl(videoInfo.preview_url)}
-                controls
-                playsInline
-                preload="metadata"
-                onEnded={() => {
-                  previewRangeRef.current = null;
-                  setPreviewing(false);
-                  updateAudioCurrentTime();
-                }}
-                onPause={() => {
-                  setPreviewing(false);
-                  updateAudioCurrentTime();
-                }}
-                onLoadedMetadata={updateAudioCurrentTime}
-                onSeeked={updateAudioCurrentTime}
-                onTimeUpdate={onPreviewTimeUpdate}
-              />
-              <div className="audio-preview-actions">
-                <button className="small-button" type="button" disabled={!canPreview} onClick={playAudioClip}>
-                  <Play size={16} />
-                  {previewing ? "重新试听" : "试听片段"}
-                </button>
-                <button className="small-button secondary" type="button" disabled={!previewing} onClick={stopAudioPreview}>
-                  停止
-                </button>
-              </div>
-              <div className="metric">{videoInfo.filename} · {formatTimeInput(videoInfo.duration)}</div>
-            </>
-          ) : (
-            <div className="audio-empty">请先下载视频，再试听选中的音频片段</div>
-          )}
-        </section>
-
-        <section className="panel-section audio-panel">
-          <div className="section-title">
-            <Scissors size={18} />
-            <h2>片段</h2>
-          </div>
-          <div className="field-grid two">
-            <label>
-              开始
+        <div className="audio-column audio-column-primary">
+          <section className="panel-section audio-panel audio-source-panel">
+            <div className="section-title">
+              <Music size={18} />
+              <h2>视频源</h2>
+            </div>
+            <div className="bv-row">
               <input
-                className="time-input"
-                type="text"
-                placeholder="0:00"
-                value={startTimeInput}
-                onBlur={() => {
-                  commitClipInputs();
-                }}
-                onChange={(event) => {
-                  setStartTimeInput(event.target.value);
-                  setResult(null);
-                }}
+                value={bilibiliSource.bv}
+                placeholder="BV1... 或 bilibili 视频 URL"
+                onChange={(event) => bilibiliSource.updateInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
-                    event.currentTarget.blur();
+                    void bilibiliSource.downloadSource();
                   }
                 }}
               />
-            </label>
-            <label>
-              结束
-              <input
-                className="time-input"
-                type="text"
-                inputMode="decimal"
-                placeholder="0:10"
-                value={endTimeInput}
-                onBlur={() => {
-                  commitClipInputs();
-                }}
-                onChange={(event) => {
-                  setEndTimeInput(event.target.value);
-                  setResult(null);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.currentTarget.blur();
-                  }
-                }}
-              />
-            </label>
-          </div>
-          <div className="clip-readout four">
-            <div>
-              <span>开始</span>
-              <strong>{formatTimeInput(normalizedStartInput ?? 0)}</strong>
-            </div>
-            <div>
-              <span>结束</span>
-              <strong>{formatTimeInput(normalizedEndInput ?? MIN_CLIP_DURATION)}</strong>
-            </div>
-            <div>
-              <span>时长</span>
-              <strong>{formatTimeInput(normalizedClipDurationInput ?? MIN_CLIP_DURATION)}</strong>
-            </div>
-            <div>
-              <span>总长</span>
-              <strong>{formatTimeInput(sourceDuration ?? 0)}</strong>
-            </div>
-          </div>
-          <div className="clip-actions two">
-            <button className="small-button secondary" type="button" disabled={!videoInfo} onClick={setAudioStartFromCurrent}>
-              <SkipBack size={16} />
-              设为开始
-            </button>
-            <button className="small-button secondary" type="button" disabled={!videoInfo} onClick={setAudioEndFromCurrent}>
-              <Clock3 size={16} />
-              设为结束
-            </button>
-          </div>
-          <div className="range-value">当前 {currentTimeLabel}</div>
-        </section>
-
-        <section className="panel-section audio-panel">
-          <div className="section-title">
-            <Download size={18} />
-            <h2>输出</h2>
-          </div>
-          <div className="format-options" role="group" aria-label="音频格式">
-            {(["mp3", "m4a", "wav"] as AudioFormat[]).map((item) => (
               <button
-                key={item}
-                className={`format-option ${format === item ? "active" : ""}`}
                 type="button"
-                aria-pressed={format === item}
-                onClick={() => {
-                  setFormat(item);
-                  setResult(null);
-                }}
+                disabled={!bilibiliSource.canUse}
+                onClick={() => void bilibiliSource.refreshPages()}
+                aria-label="识别 Bilibili 分 P"
               >
-                {item.toUpperCase()}
+                {busy === "pages" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+                识别
               </button>
-            ))}
-          </div>
-          <button className="wide-button" type="button" disabled={!canExtract} onClick={() => void extractAudio()}>
-            {busy === "extract" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-            提取并下载
-          </button>
-        </section>
-      </section>
+            </div>
+            {bilibiliSource.availablePages.length > 1 ? (
+              <label>
+                分 P
+                <select
+                  value={bilibiliSource.page}
+                  disabled={Boolean(busy)}
+                  onChange={(event) => bilibiliSource.selectPage(Number(event.target.value))}
+                >
+                  {bilibiliSource.availablePages.map((page) => (
+                    <option key={page.page} value={page.page}>
+                      {formatBilibiliPageOption(page)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {bilibiliSource.status ? <div className="metric">{bilibiliSource.status}</div> : null}
+            <button
+              className="wide-button"
+              type="button"
+              disabled={!canDownload}
+              onClick={() => void bilibiliSource.downloadSource()}
+            >
+              {busy === "download" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+              下载视频
+            </button>
+          </section>
 
-      <section className="status-row audio-status">
-        {error ? (
-          <div className="error-box">{error}</div>
-        ) : (
-          <div className="hint-box">
-            <Clock3 size={16} />
-            {videoInfo ? "已下载" : "尚未下载"} · {formatTimeInput(normalizedStartInput ?? 0)} - {formatTimeInput(normalizedEndInput ?? 0)} · {format.toUpperCase()}
-          </div>
-        )}
-        {result ? (
-          <a className="download-link" href={apiUrl(result.download_url)} download>
-            <Download size={18} />
-            {result.filename} · {formatSize(result.size_bytes)}
-          </a>
-        ) : null}
+          <section className="panel-section audio-panel audio-clip-panel">
+            <div className="section-title">
+              <Scissors size={18} />
+              <h2>片段</h2>
+            </div>
+            <div className="field-grid two">
+              <label>
+                开始
+                <input
+                  className="time-input"
+                  type="text"
+                  placeholder="0:00"
+                  value={startTimeInput}
+                  onBlur={() => {
+                    commitClipInputs();
+                  }}
+                  onChange={(event) => {
+                    setStartTimeInput(event.target.value);
+                    setResult(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
+              <label>
+                结束
+                <input
+                  className="time-input"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0:10"
+                  value={endTimeInput}
+                  onBlur={() => {
+                    commitClipInputs();
+                  }}
+                  onChange={(event) => {
+                    setEndTimeInput(event.target.value);
+                    setResult(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+              </label>
+            </div>
+            <div className="clip-readout four">
+              <div>
+                <span>开始</span>
+                <strong>{formatTimeInput(normalizedStartInput ?? 0)}</strong>
+              </div>
+              <div>
+                <span>结束</span>
+                <strong>{formatTimeInput(normalizedEndInput ?? MIN_CLIP_DURATION)}</strong>
+              </div>
+              <div>
+                <span>时长</span>
+                <strong>{formatTimeInput(normalizedClipDurationInput ?? MIN_CLIP_DURATION)}</strong>
+              </div>
+              <div>
+                <span>总长</span>
+                <strong>{formatTimeInput(sourceDuration ?? 0)}</strong>
+              </div>
+            </div>
+            <div className="clip-actions two">
+              <button className="small-button secondary" type="button" disabled={!videoInfo} onClick={setAudioStartFromCurrent}>
+                <SkipBack size={16} />
+                设为开始
+              </button>
+              <button className="small-button secondary" type="button" disabled={!videoInfo} onClick={setAudioEndFromCurrent}>
+                <Clock3 size={16} />
+                设为结束
+              </button>
+            </div>
+            <div className="range-value">当前 {currentTimeLabel}</div>
+          </section>
+        </div>
+
+        <div className="audio-column audio-column-secondary">
+          <section className="panel-section audio-panel audio-preview-panel">
+            <div className="section-title">
+              <Play size={18} />
+              <h2>试听</h2>
+            </div>
+            {videoInfo ? (
+              <>
+                <video
+                  ref={previewRef}
+                  className="audio-preview-media"
+                  src={apiUrl(videoInfo.preview_url)}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  onEnded={() => {
+                    previewRangeRef.current = null;
+                    setPreviewing(false);
+                    updateAudioCurrentTime();
+                  }}
+                  onPause={() => {
+                    setPreviewing(false);
+                    updateAudioCurrentTime();
+                  }}
+                  onLoadedMetadata={updateAudioCurrentTime}
+                  onSeeked={updateAudioCurrentTime}
+                  onTimeUpdate={onPreviewTimeUpdate}
+                />
+                <div className="audio-preview-actions">
+                  <button className="small-button" type="button" disabled={!canPreview} onClick={playAudioClip}>
+                    <Play size={16} />
+                    {previewing ? "重新试听" : "试听片段"}
+                  </button>
+                  <button className="small-button secondary" type="button" disabled={!previewing} onClick={stopAudioPreview}>
+                    停止
+                  </button>
+                </div>
+                <div className="metric">{videoInfo.filename} · {formatTimeInput(videoInfo.duration)}</div>
+              </>
+            ) : (
+              <div className="audio-empty">请先下载视频，再试听选中的音频片段</div>
+            )}
+          </section>
+
+          <section className="panel-section audio-panel audio-output-panel">
+            <div className="section-title">
+              <Download size={18} />
+              <h2>输出</h2>
+            </div>
+            <div className="format-options" role="group" aria-label="音频格式">
+              {(["mp3", "m4a", "wav"] as AudioFormat[]).map((item) => (
+                <button
+                  key={item}
+                  className={`format-option ${format === item ? "active" : ""}`}
+                  type="button"
+                  aria-pressed={format === item}
+                  onClick={() => {
+                    setFormat(item);
+                    setResult(null);
+                  }}
+                >
+                  {item.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            <button className="wide-button" type="button" disabled={!canExtract} onClick={() => void extractAudio()}>
+              {busy === "extract" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+              提取并下载
+            </button>
+          </section>
+
+          <section className="status-row audio-status">
+            {error ? (
+              <div className="error-box">{error}</div>
+            ) : (
+              <div className="hint-box">
+                <Clock3 size={16} />
+                {videoInfo ? "已下载" : "尚未下载"} · {formatTimeInput(normalizedStartInput ?? 0)} - {formatTimeInput(normalizedEndInput ?? 0)} · {format.toUpperCase()}
+              </div>
+            )}
+            {result ? (
+              <a className="download-link" href={apiUrl(result.download_url)} download>
+                <Download size={18} />
+                {result.filename} · {formatSize(result.size_bytes)}
+              </a>
+            ) : null}
+          </section>
+        </div>
       </section>
       <SiteFooter currentPage="audio" navigateTo={navigateTo} />
     </main>

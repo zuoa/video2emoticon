@@ -686,6 +686,13 @@ input[type="color"] {
   width: var(--content-rail);
 }
 
+.audio-column {
+  align-content: start;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
 .audio-panel {
   align-content: start;
 }
@@ -746,8 +753,8 @@ input[type="color"] {
 }
 
 .audio-status {
-  margin: 14px auto 0;
-  max-width: 1180px;
+  margin: 0;
+  max-width: none;
   width: 100%;
 }
 
@@ -1022,6 +1029,30 @@ input[type="color"] {
 
   .audio-workbench {
     grid-template-columns: 1fr;
+  }
+
+  .audio-column {
+    display: contents;
+  }
+
+  .audio-source-panel {
+    order: 1;
+  }
+
+  .audio-preview-panel {
+    order: 2;
+  }
+
+  .audio-clip-panel {
+    order: 3;
+  }
+
+  .audio-output-panel {
+    order: 4;
+  }
+
+  .audio-status {
+    order: 5;
   }
 
   .preview-pane {
