@@ -77,6 +77,25 @@ interface ParsedBilibiliInput {
 
 type AppPage = "home" | "gif" | "audio";
 type NavigateTo = (page: AppPage) => void;
+type BilibiliBusy = "pages" | "download";
+
+interface BilibiliDownloadContext {
+  bv: string;
+  page: number;
+}
+
+interface UseBilibiliSourceOptions {
+  busy: string | null;
+  setBusy: (busy: BilibiliBusy | null) => void;
+  setError: (message: string) => void;
+  onInputChange?: () => void;
+  onPageChange?: () => void;
+  onBeforeDownload?: () => void;
+  onDownloaded: (info: VideoInfo, context: BilibiliDownloadContext) => string | void;
+  selectedPageStatus: string;
+  multiPageDetectedStatus: (bv: string, count: number) => string;
+  downloadErrorMessage: string;
+}
 
 function pageFromHash(): AppPage {
   if (window.location.hash === "#/gif") {
@@ -248,6 +267,10 @@ function formatBilibiliPageOption(page: BilibiliPageInfo): string {
   return `P${page.page} · ${page.title}${duration}`;
 }
 
+function formatBilibiliMultiPageStatus(bv: string, count: number): string {
+  return `已识别 ${bv} 的 ${count} 个分 P，请选择后下载`;
+}
+
 function speedFactorFromLevel(level: number): number {
   if (level === 0 || Math.abs(level) === 1) {
     return 1;
@@ -368,6 +391,177 @@ function SiteFooter({ currentPage, navigateTo }: { currentPage: AppPage; navigat
   );
 }
 
+function useBilibiliSource({
+  busy,
+  setBusy,
+  setError,
+  onInputChange,
+  onPageChange,
+  onBeforeDownload,
+  onDownloaded,
+  selectedPageStatus,
+  multiPageDetectedStatus,
+  downloadErrorMessage
+}: UseBilibiliSourceOptions) {
+  const [bv, setBv] = useState("");
+  const [pages, setPages] = useState<BilibiliPagesResponse | null>(null);
+  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState("");
+
+  const parsedInput = useMemo(() => parseBilibiliInput(bv), [bv]);
+  const inputBv = parsedInput?.bv ?? null;
+  const availablePages = useMemo(
+    () => (inputBv && pages?.bv === inputBv ? pages.pages : []),
+    [inputBv, pages]
+  );
+  const canUse = Boolean(parsedInput && !busy);
+
+  const updateInput = useCallback(
+    (value: string) => {
+      const nextParsedInput = parseBilibiliInput(value);
+      setBv(value);
+      setPages(null);
+      setPage(nextParsedInput?.page ?? 1);
+      setStatus(
+        nextParsedInput && value.trim() !== nextParsedInput.bv
+          ? `已识别 ${nextParsedInput.bv}${nextParsedInput.page ? ` P${nextParsedInput.page}` : ""}`
+          : ""
+      );
+      onInputChange?.();
+    },
+    [onInputChange]
+  );
+
+  const selectPage = useCallback(
+    (nextPage: number) => {
+      setPage(nextPage);
+      setStatus(selectedPageStatus);
+      onPageChange?.();
+    },
+    [onPageChange, selectedPageStatus]
+  );
+
+  const fetchPages = useCallback(
+    async (parsed: ParsedBilibiliInput): Promise<BilibiliPagesResponse | null> => {
+      setBusy("pages");
+      setError("");
+      setStatus("");
+      try {
+        const response = await fetch(apiUrl("/api/videos/bilibili/pages"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bv: parsed.bv, page: parsed.page })
+        }).then(readJson<BilibiliPagesResponse>);
+        setBv(response.bv);
+        setPages(response);
+        const nextPage = response.pages.some((item) => item.page === response.selected_page)
+          ? response.selected_page
+          : response.pages[0]?.page ?? 1;
+        setPage(nextPage);
+        setStatus(
+          response.pages.length > 1
+            ? multiPageDetectedStatus(response.bv, response.pages.length)
+            : `已识别 ${response.bv} P${nextPage}`
+        );
+        return response;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "分 P 读取失败");
+        return null;
+      } finally {
+        setBusy(null);
+      }
+    },
+    [multiPageDetectedStatus, setBusy, setError]
+  );
+
+  const refreshPages = useCallback(async () => {
+    if (!bv.trim()) {
+      setError("请输入 BV 号或 Bilibili 视频地址");
+      return;
+    }
+    const parsed = parseBilibiliInput(bv);
+    if (!parsed) {
+      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
+      return;
+    }
+    await fetchPages(parsed);
+  }, [bv, fetchPages, setError]);
+
+  const downloadPage = useCallback(
+    async (sourceBv: string, selectedPage: number) => {
+      setBusy("download");
+      setError("");
+      setStatus("");
+      onBeforeDownload?.();
+      try {
+        const info = await fetch(apiUrl("/api/videos/bilibili"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bv: sourceBv, page: selectedPage })
+        }).then(readJson<VideoInfo>);
+        setBv(sourceBv);
+        const nextStatus = onDownloaded(info, { bv: sourceBv, page: selectedPage });
+        if (nextStatus !== undefined) {
+          setStatus(nextStatus);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : downloadErrorMessage);
+      } finally {
+        setBusy(null);
+      }
+    },
+    [downloadErrorMessage, onBeforeDownload, onDownloaded, setBusy, setError]
+  );
+
+  const downloadSource = useCallback(async () => {
+    if (!bv.trim()) {
+      setError("请输入 BV 号或 Bilibili 视频地址");
+      return;
+    }
+    const parsed = parseBilibiliInput(bv);
+    if (!parsed) {
+      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
+      return;
+    }
+
+    let selectedPage = availablePages.some((item) => item.page === page)
+      ? page
+      : availablePages[0]?.page ?? parsed.page ?? 1;
+    let selectedBv = parsed.bv;
+
+    if (availablePages.length === 0) {
+      const response = await fetchPages(parsed);
+      if (!response) {
+        return;
+      }
+      selectedBv = response.bv;
+      selectedPage = response.pages.some((item) => item.page === response.selected_page)
+        ? response.selected_page
+        : response.pages[0]?.page ?? 1;
+      if (response.pages.length > 1 && parsed.page === null) {
+        setStatus(multiPageDetectedStatus(response.bv, response.pages.length));
+        return;
+      }
+    }
+
+    await downloadPage(selectedBv, selectedPage);
+  }, [availablePages, bv, downloadPage, fetchPages, multiPageDetectedStatus, page, setError]);
+
+  return {
+    bv,
+    page,
+    status,
+    parsedInput,
+    availablePages,
+    canUse,
+    setStatus,
+    updateInput,
+    selectPage,
+    refreshPages,
+    downloadSource
+  };
+}
+
 function HomePage({ navigateTo }: { navigateTo: NavigateTo }) {
   return (
     <main className="app-shell home-shell">
@@ -430,10 +624,6 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [speedLevel, setSpeedLevel] = useState(0);
   const [loop, setLoop] = useState(true);
   const [text, setText] = useState<TextLayer>(defaultText);
-  const [bv, setBv] = useState("");
-  const [bilibiliPages, setBilibiliPages] = useState<BilibiliPagesResponse | null>(null);
-  const [bilibiliPage, setBilibiliPage] = useState(1);
-  const [bilibiliStatus, setBilibiliStatus] = useState("");
   const [busy, setBusy] = useState<"upload" | "pages" | "download" | "export" | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResponse | null>(null);
@@ -449,6 +639,18 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const dragRef = useRef<DragState | null>(null);
   const clipPreviewRef = useRef<ClipRange | null>(null);
 
+  const bilibiliSource = useBilibiliSource({
+    busy,
+    setBusy: (nextBusy) => setBusy(nextBusy),
+    setError,
+    onBeforeDownload: () => setResult(null),
+    onDownloaded: (info) => {
+      setVideoInfo(info);
+    },
+    selectedPageStatus: "已选择分 P，点击下载所选分 P",
+    multiPageDetectedStatus: formatBilibiliMultiPageStatus,
+    downloadErrorMessage: "下载失败"
+  });
   const parsedStartInput = useMemo(() => parseTimeInput(startTimeInput), [startTimeInput]);
   const parsedClipDurationInput = useMemo(() => parseTimeInput(clipDurationInput), [clipDurationInput]);
   const normalizedStartInput =
@@ -459,12 +661,6 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
       : normalizeClipDuration(parsedClipDurationInput, normalizedStartInput, videoInfo?.duration);
   const parsedOutputWidth = useMemo(() => parseOutputWidthInput(outputWidthInput), [outputWidthInput]);
   const outputWidthIsValid = parsedOutputWidth !== false;
-  const parsedBilibiliInput = useMemo(() => parseBilibiliInput(bv), [bv]);
-  const inputBv = parsedBilibiliInput?.bv ?? null;
-  const availableBilibiliPages = useMemo(
-    () => (inputBv && bilibiliPages?.bv === inputBv ? bilibiliPages.pages : []),
-    [bilibiliPages, inputBv]
-  );
   const canExport = Boolean(
     videoInfo &&
       crop &&
@@ -594,6 +790,11 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const clipDurationLabel = useMemo(() => {
     return formatTimeInput(normalizedClipDurationInput ?? clipDuration);
   }, [clipDuration, normalizedClipDurationInput]);
+  const clipEndLabel = useMemo(() => {
+    const start = normalizedStartInput ?? startTime;
+    const duration = normalizedClipDurationInput ?? clipDuration;
+    return formatTimeInput(roundTime(start + duration));
+  }, [clipDuration, normalizedClipDurationInput, normalizedStartInput, startTime]);
   const effectiveOutputWidth = useMemo(() => {
     if (parsedOutputWidth !== null && parsedOutputWidth !== false) {
       return parsedOutputWidth;
@@ -776,22 +977,10 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
     }
   }, []);
 
-  const updateBvInput = (value: string) => {
-    const parsedInput = parseBilibiliInput(value);
-    setBv(value);
-    setBilibiliPages(null);
-    setBilibiliPage(parsedInput?.page ?? 1);
-    setBilibiliStatus(
-      parsedInput && value.trim() !== parsedInput.bv
-        ? `已识别 ${parsedInput.bv}${parsedInput.page ? ` P${parsedInput.page}` : ""}`
-        : ""
-    );
-  };
-
   const loadUploadedFile = async (file: File) => {
     setBusy("upload");
     setError("");
-    setBilibiliStatus("");
+    bilibiliSource.setStatus("");
     const form = new FormData();
     form.append("file", file);
     try {
@@ -805,91 +994,6 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
     } finally {
       setBusy(null);
     }
-  };
-
-  const fetchBilibiliPages = async (
-    parsedInput: ParsedBilibiliInput
-  ): Promise<BilibiliPagesResponse | null> => {
-    if (!parsedInput.bv) {
-      setError("请输入 BV 号或合法的 Bilibili 视频地址");
-      return null;
-    }
-    setBusy("pages");
-    setError("");
-    setBilibiliStatus("");
-    try {
-      const response = await fetch(apiUrl("/api/videos/bilibili/pages"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bv: parsedInput.bv, page: parsedInput.page })
-      }).then(readJson<BilibiliPagesResponse>);
-      setBv(response.bv);
-      setBilibiliPages(response);
-      const nextPage =
-        response.pages.some((page) => page.page === response.selected_page)
-          ? response.selected_page
-          : response.pages[0]?.page ?? 1;
-      setBilibiliPage(nextPage);
-      setBilibiliStatus(
-        response.pages.length > 1
-          ? `已识别 ${response.bv} 的 ${response.pages.length} 个分 P`
-          : `已识别 ${response.bv} P${nextPage}`
-      );
-      return response;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "分 P 读取失败");
-      return null;
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const downloadBilibiliPage = async (parsedInput: ParsedBilibiliInput, page: number) => {
-    setBusy("download");
-    setError("");
-    setBilibiliStatus("");
-    try {
-      const info = await fetch(apiUrl("/api/videos/bilibili"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bv: parsedInput.bv, page })
-      }).then(readJson<VideoInfo>);
-      setBv(parsedInput.bv);
-      setVideoInfo(info);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "下载失败");
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const loadBilibili = async () => {
-    if (!bv.trim()) {
-      setError("请输入 BV 号或 Bilibili 视频地址");
-      return;
-    }
-    const parsedInput = parseBilibiliInput(bv);
-    if (!parsedInput) {
-      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
-      return;
-    }
-
-    if (availableBilibiliPages.length === 0) {
-      const response = await fetchBilibiliPages(parsedInput);
-      if (!response) {
-        return;
-      }
-      if (response.pages.length > 1 && parsedInput.page === null) {
-        return;
-      }
-      await downloadBilibiliPage({ bv: response.bv, page: response.selected_page }, response.selected_page);
-      return;
-    }
-
-    const selectedPage = availableBilibiliPages.some((page) => page.page === bilibiliPage)
-      ? bilibiliPage
-      : availableBilibiliPages[0]?.page ?? 1;
-    await downloadBilibiliPage(parsedInput, selectedPage);
   };
 
   const uploadFonts = async (fileList: FileList | null) => {
@@ -1080,41 +1184,40 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 }
               }}
             />
-            <button className="wide-button" disabled={Boolean(busy)} onClick={() => fileInputRef.current?.click()}>
+            <button className="wide-button" type="button" disabled={Boolean(busy)} onClick={() => fileInputRef.current?.click()}>
               {busy === "upload" ? <Loader2 className="spin" size={17} /> : <Video size={17} />}
               上传视频
             </button>
             <div className="bv-row">
               <input
-                value={bv}
+                value={bilibiliSource.bv}
                 placeholder="BV1... 或 bilibili 视频 URL"
-                onChange={(event) => updateBvInput(event.target.value)}
+                onChange={(event) => bilibiliSource.updateInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
-                    void loadBilibili();
+                    void bilibiliSource.downloadSource();
                   }
                 }}
               />
-              <button disabled={Boolean(busy)} onClick={() => void loadBilibili()}>
-                {busy === "download" || busy === "pages" ? (
-                  <Loader2 className="spin" size={17} />
-                ) : (
-                  <Download size={17} />
-                )}
+              <button
+                type="button"
+                disabled={!bilibiliSource.canUse}
+                onClick={() => void bilibiliSource.refreshPages()}
+                aria-label="识别 Bilibili 分 P"
+              >
+                {busy === "pages" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+                识别
               </button>
             </div>
-            {availableBilibiliPages.length > 1 ? (
+            {bilibiliSource.availablePages.length > 1 ? (
               <label>
                 分 P
                 <select
-                  value={bilibiliPage}
+                  value={bilibiliSource.page}
                   disabled={Boolean(busy)}
-                  onChange={(event) => {
-                    setBilibiliPage(Number(event.target.value));
-                    setBilibiliStatus("");
-                  }}
+                  onChange={(event) => bilibiliSource.selectPage(Number(event.target.value))}
                 >
-                  {availableBilibiliPages.map((page) => (
+                  {bilibiliSource.availablePages.map((page) => (
                     <option key={page.page} value={page.page}>
                       {formatBilibiliPageOption(page)}
                     </option>
@@ -1122,7 +1225,21 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 </select>
               </label>
             ) : null}
-            {bilibiliStatus ? <div className="metric">{bilibiliStatus}</div> : null}
+            <button
+              className="wide-button secondary"
+              type="button"
+              disabled={!bilibiliSource.canUse}
+              onClick={() => void bilibiliSource.downloadSource()}
+            >
+              {busy === "download" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+              {bilibiliSource.availablePages.length > 1 ? "下载所选分 P" : "下载 BV 视频"}
+            </button>
+            {videoInfo ? (
+              <div className="metric source-metric">
+                已载入 {videoInfo.filename} · {formatTimeInput(videoInfo.duration)} · {videoInfo.width}x{videoInfo.height}
+              </div>
+            ) : null}
+            {bilibiliSource.status ? <div className="metric">{bilibiliSource.status}</div> : null}
           </section>
 
           <section className="panel-section">
@@ -1169,13 +1286,17 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 />
               </label>
             </div>
-            <div className="clip-readout">
+            <div className="clip-readout four">
               <div>
-                <span>当前</span>
-                <strong>{currentTimeLabel}</strong>
+                <span>开始</span>
+                <strong>{formatTimeInput(normalizedStartInput ?? startTime)}</strong>
               </div>
               <div>
-                <span>片段</span>
+                <span>结束</span>
+                <strong>{clipEndLabel}</strong>
+              </div>
+              <div>
+                <span>时长</span>
                 <strong>{clipDurationLabel}</strong>
               </div>
               <div>
@@ -1264,6 +1385,10 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
               <input type="checkbox" checked={loop} onChange={(event) => setLoop(event.target.checked)} />
               循环播放
             </label>
+            <button className="wide-button" type="button" disabled={!canExport} onClick={exportGif}>
+              {busy === "export" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+              导出 GIF
+            </button>
           </section>
 
           <section className="panel-section">
@@ -1489,10 +1614,6 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
 
 function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
-  const [bv, setBv] = useState("");
-  const [bilibiliPages, setBilibiliPages] = useState<BilibiliPagesResponse | null>(null);
-  const [bilibiliPage, setBilibiliPage] = useState(1);
-  const [bilibiliStatus, setBilibiliStatus] = useState("");
   const [startTimeInput, setStartTimeInput] = useState(formatTimeInput(0));
   const [endTimeInput, setEndTimeInput] = useState(formatTimeInput(10));
   const [format, setFormat] = useState<AudioFormat>("mp3");
@@ -1500,19 +1621,39 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResponse | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
 
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const previewRangeRef = useRef<ClipRange | null>(null);
 
-  const parsedBilibiliInput = useMemo(() => parseBilibiliInput(bv), [bv]);
-  const inputBv = parsedBilibiliInput?.bv ?? null;
-  const availableBilibiliPages = useMemo(
-    () => (inputBv && bilibiliPages?.bv === inputBv ? bilibiliPages.pages : []),
-    [bilibiliPages, inputBv]
-  );
+  const resetAudioSource = useCallback(() => {
+    setVideoInfo(null);
+    setPreviewing(false);
+    setCurrentTime(0);
+    previewRangeRef.current = null;
+    setResult(null);
+  }, []);
+
+  const bilibiliSource = useBilibiliSource({
+    busy,
+    setBusy: (nextBusy) => setBusy(nextBusy),
+    setError,
+    onInputChange: resetAudioSource,
+    onPageChange: resetAudioSource,
+    onBeforeDownload: resetAudioSource,
+    onDownloaded: (info, context) => {
+      setVideoInfo(info);
+      setStartTimeInput(formatTimeInput(0));
+      setEndTimeInput(formatTimeInput(Math.min(10, Math.max(MIN_CLIP_DURATION, info.duration))));
+      return `已下载 ${context.bv} P${context.page} · ${formatTimeInput(info.duration)}`;
+    },
+    selectedPageStatus: "已选择分 P，点击下载视频",
+    multiPageDetectedStatus: formatBilibiliMultiPageStatus,
+    downloadErrorMessage: "视频下载失败"
+  });
   const selectedPageInfo = useMemo(
-    () => availableBilibiliPages.find((page) => page.page === bilibiliPage) ?? null,
-    [availableBilibiliPages, bilibiliPage]
+    () => bilibiliSource.availablePages.find((page) => page.page === bilibiliSource.page) ?? null,
+    [bilibiliSource.availablePages, bilibiliSource.page]
   );
   const sourceDuration = videoInfo?.duration ?? selectedPageInfo?.duration ?? undefined;
   const parsedStartInput = useMemo(() => parseTimeInput(startTimeInput), [startTimeInput]);
@@ -1527,9 +1668,10 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
     normalizedStartInput === null || normalizedEndInput === null
       ? null
       : roundTime(normalizedEndInput - normalizedStartInput);
-  const canDownload = Boolean(parsedBilibiliInput && !busy);
+  const canDownload = bilibiliSource.canUse;
   const canPreview = Boolean(videoInfo && normalizedStartInput !== null && normalizedEndInput !== null && !busy);
   const canExtract = Boolean(videoInfo && normalizedStartInput !== null && normalizedEndInput !== null && !busy);
+  const currentTimeLabel = useMemo(() => formatTimeInput(currentTime), [currentTime]);
 
   useEffect(() => {
     return () => {
@@ -1537,21 +1679,12 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
     };
   }, []);
 
-  const updateBvInput = (value: string) => {
-    const parsedInput = parseBilibiliInput(value);
-    setBv(value);
-    setBilibiliPages(null);
-    setBilibiliPage(parsedInput?.page ?? 1);
-    setVideoInfo(null);
-    setPreviewing(false);
-    previewRangeRef.current = null;
-    setResult(null);
-    setBilibiliStatus(
-      parsedInput && value.trim() !== parsedInput.bv
-        ? `已识别 ${parsedInput.bv}${parsedInput.page ? ` P${parsedInput.page}` : ""}`
-        : ""
-    );
-  };
+  const updateAudioCurrentTime = useCallback(() => {
+    const element = previewRef.current;
+    if (element) {
+      setCurrentTime(roundTime(element.currentTime));
+    }
+  }, []);
 
   const commitClipInputs = useCallback((): ClipRange | null => {
     const nextStartRaw = parseTimeInput(startTimeInput);
@@ -1573,107 +1706,6 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
     setError("");
     return { start: nextStart, end: nextEnd, duration: nextDuration };
   }, [endTimeInput, sourceDuration, startTimeInput]);
-
-  const fetchBilibiliPages = async (
-    parsedInput: ParsedBilibiliInput
-  ): Promise<BilibiliPagesResponse | null> => {
-    setBusy("pages");
-    setError("");
-    setBilibiliStatus("");
-    try {
-      const response = await fetch(apiUrl("/api/videos/bilibili/pages"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bv: parsedInput.bv, page: parsedInput.page })
-      }).then(readJson<BilibiliPagesResponse>);
-      setBv(response.bv);
-      setBilibiliPages(response);
-      const nextPage =
-        response.pages.some((page) => page.page === response.selected_page)
-          ? response.selected_page
-          : response.pages[0]?.page ?? 1;
-      setBilibiliPage(nextPage);
-      setBilibiliStatus(
-        response.pages.length > 1
-          ? `已识别 ${response.bv} 的 ${response.pages.length} 个分 P`
-          : `已识别 ${response.bv} P${nextPage}`
-      );
-      return response;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "分 P 读取失败");
-      return null;
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const refreshBilibiliPages = async () => {
-    if (!bv.trim()) {
-      setError("请输入 BV 号或 Bilibili 视频地址");
-      return;
-    }
-    const parsedInput = parseBilibiliInput(bv);
-    if (!parsedInput) {
-      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
-      return;
-    }
-    await fetchBilibiliPages(parsedInput);
-  };
-
-  const downloadAudioSource = async () => {
-    if (!bv.trim()) {
-      setError("请输入 BV 号或 Bilibili 视频地址");
-      return;
-    }
-    const parsedInput = parseBilibiliInput(bv);
-    if (!parsedInput) {
-      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
-      return;
-    }
-
-    let selectedPage = availableBilibiliPages.some((page) => page.page === bilibiliPage)
-      ? bilibiliPage
-      : availableBilibiliPages[0]?.page ?? parsedInput.page ?? 1;
-    let selectedBv = parsedInput.bv;
-
-    if (availableBilibiliPages.length === 0) {
-      const response = await fetchBilibiliPages(parsedInput);
-      if (!response) {
-        return;
-      }
-      selectedBv = response.bv;
-      selectedPage = response.pages.some((page) => page.page === response.selected_page)
-        ? response.selected_page
-        : response.pages[0]?.page ?? 1;
-      if (response.pages.length > 1 && parsedInput.page === null) {
-        setBilibiliStatus(`已识别 ${response.bv} 的 ${response.pages.length} 个分 P，请选择后再下载`);
-        return;
-      }
-    }
-
-    setBusy("download");
-    setError("");
-    setResult(null);
-    setVideoInfo(null);
-    previewRangeRef.current = null;
-    setPreviewing(false);
-    try {
-      const info = await fetch(apiUrl("/api/videos/bilibili"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bv: selectedBv, page: selectedPage })
-      }).then(readJson<VideoInfo>);
-      setBv(selectedBv);
-      setVideoInfo(info);
-      setStartTimeInput(formatTimeInput(0));
-      setEndTimeInput(formatTimeInput(Math.min(10, Math.max(MIN_CLIP_DURATION, info.duration))));
-      setBilibiliStatus(`已下载 ${selectedBv} P${selectedPage} · ${formatTimeInput(info.duration)}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "视频下载失败");
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const playAudioClip = () => {
     const element = previewRef.current;
@@ -1706,6 +1738,9 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
 
   const onPreviewTimeUpdate = () => {
     const element = previewRef.current;
+    if (element) {
+      setCurrentTime(roundTime(element.currentTime));
+    }
     const range = previewRangeRef.current;
     if (!element || !range) {
       return;
@@ -1716,6 +1751,46 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
       previewRangeRef.current = null;
       setPreviewing(false);
     }
+  };
+
+  const setAudioStartFromCurrent = () => {
+    if (!videoInfo) {
+      return;
+    }
+    const rawTime = previewRef.current?.currentTime ?? currentTime;
+    const nextStart = normalizeStartTime(rawTime, videoInfo.duration);
+    const currentEnd = parseTimeInput(endTimeInput);
+    const fallbackEnd = Math.min(videoInfo.duration, nextStart + Math.min(10, videoInfo.duration - nextStart));
+    const nextEnd =
+      currentEnd === null || currentEnd <= nextStart
+        ? normalizeEndTime(fallbackEnd, nextStart, videoInfo.duration)
+        : normalizeEndTime(currentEnd, nextStart, videoInfo.duration);
+    setStartTimeInput(formatTimeInput(nextStart));
+    setEndTimeInput(formatTimeInput(nextEnd));
+    setError("");
+    setResult(null);
+  };
+
+  const setAudioEndFromCurrent = () => {
+    if (!videoInfo) {
+      return;
+    }
+    const startRaw = parseTimeInput(startTimeInput);
+    if (startRaw === null) {
+      setError("开始时间格式不正确");
+      return;
+    }
+    const nextStart = normalizeStartTime(startRaw, videoInfo.duration);
+    const rawTime = previewRef.current?.currentTime ?? currentTime;
+    if (rawTime <= nextStart) {
+      setError("结束时间必须晚于开始时间");
+      return;
+    }
+    const nextEnd = normalizeEndTime(rawTime, nextStart, videoInfo.duration);
+    setStartTimeInput(formatTimeInput(nextStart));
+    setEndTimeInput(formatTimeInput(nextEnd));
+    setError("");
+    setResult(null);
   };
 
   const extractAudio = async () => {
@@ -1743,7 +1818,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
         })
       }).then(readJson<ExportResponse>);
       setResult(response);
-      setBilibiliStatus(`已提取 ${videoInfo.filename} · ${format.toUpperCase()}`);
+      bilibiliSource.setStatus(`已提取 ${videoInfo.filename} · ${format.toUpperCase()}`);
       triggerDownload(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : "音频提取失败");
@@ -1757,20 +1832,14 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
       <ToolHeader
         currentPage="audio"
         title="BV 音频片段"
-        subtitle={bilibiliStatus || "从 Bilibili BV 号提取音频片段"}
+        subtitle={bilibiliSource.status || "从 Bilibili BV 号提取音频片段"}
         icon={<Music size={24} />}
         navigateTo={navigateTo}
         actions={
-          <>
-          <button className="nav-button" disabled={!canDownload} onClick={() => void downloadAudioSource()}>
-            {busy === "download" ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
-            下载视频
-          </button>
-          <button className="primary-button" disabled={!canExtract} onClick={() => void extractAudio()}>
+          <button className="primary-button" type="button" disabled={!canExtract} onClick={() => void extractAudio()}>
             {busy === "extract" ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
             提取音频
           </button>
-          </>
         }
       />
 
@@ -1782,35 +1851,34 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
           </div>
           <div className="bv-row">
             <input
-              value={bv}
+              value={bilibiliSource.bv}
               placeholder="BV1... 或 bilibili 视频 URL"
-              onChange={(event) => updateBvInput(event.target.value)}
+              onChange={(event) => bilibiliSource.updateInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  void downloadAudioSource();
+                  void bilibiliSource.downloadSource();
                 }
               }}
             />
-            <button disabled={Boolean(busy)} onClick={() => void refreshBilibiliPages()}>
+            <button
+              type="button"
+              disabled={!bilibiliSource.canUse}
+              onClick={() => void bilibiliSource.refreshPages()}
+              aria-label="识别 Bilibili 分 P"
+            >
               {busy === "pages" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+              识别
             </button>
           </div>
-          {availableBilibiliPages.length > 1 ? (
+          {bilibiliSource.availablePages.length > 1 ? (
             <label>
               分 P
               <select
-                value={bilibiliPage}
+                value={bilibiliSource.page}
                 disabled={Boolean(busy)}
-                onChange={(event) => {
-                  setBilibiliPage(Number(event.target.value));
-                  setVideoInfo(null);
-                  previewRangeRef.current = null;
-                  setPreviewing(false);
-                  setResult(null);
-                  setBilibiliStatus("");
-                }}
+                onChange={(event) => bilibiliSource.selectPage(Number(event.target.value))}
               >
-                {availableBilibiliPages.map((page) => (
+                {bilibiliSource.availablePages.map((page) => (
                   <option key={page.page} value={page.page}>
                     {formatBilibiliPageOption(page)}
                   </option>
@@ -1818,8 +1886,13 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
               </select>
             </label>
           ) : null}
-          {bilibiliStatus ? <div className="metric">{bilibiliStatus}</div> : null}
-          <button className="wide-button" disabled={!canDownload} onClick={() => void downloadAudioSource()}>
+          {bilibiliSource.status ? <div className="metric">{bilibiliSource.status}</div> : null}
+          <button
+            className="wide-button"
+            type="button"
+            disabled={!canDownload}
+            onClick={() => void bilibiliSource.downloadSource()}
+          >
             {busy === "download" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
             下载视频
           </button>
@@ -1842,18 +1915,22 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 onEnded={() => {
                   previewRangeRef.current = null;
                   setPreviewing(false);
+                  updateAudioCurrentTime();
                 }}
                 onPause={() => {
                   setPreviewing(false);
+                  updateAudioCurrentTime();
                 }}
+                onLoadedMetadata={updateAudioCurrentTime}
+                onSeeked={updateAudioCurrentTime}
                 onTimeUpdate={onPreviewTimeUpdate}
               />
               <div className="audio-preview-actions">
-                <button className="small-button" disabled={!canPreview} onClick={playAudioClip}>
+                <button className="small-button" type="button" disabled={!canPreview} onClick={playAudioClip}>
                   <Play size={16} />
                   {previewing ? "重新试听" : "试听片段"}
                 </button>
-                <button className="small-button secondary" disabled={!previewing} onClick={stopAudioPreview}>
+                <button className="small-button secondary" type="button" disabled={!previewing} onClick={stopAudioPreview}>
                   停止
                 </button>
               </div>
@@ -1914,7 +1991,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
               />
             </label>
           </div>
-          <div className="clip-readout audio-readout">
+          <div className="clip-readout four">
             <div>
               <span>开始</span>
               <strong>{formatTimeInput(normalizedStartInput ?? 0)}</strong>
@@ -1927,7 +2004,22 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
               <span>时长</span>
               <strong>{formatTimeInput(normalizedClipDurationInput ?? MIN_CLIP_DURATION)}</strong>
             </div>
+            <div>
+              <span>总长</span>
+              <strong>{formatTimeInput(sourceDuration ?? 0)}</strong>
+            </div>
           </div>
+          <div className="clip-actions two">
+            <button className="small-button secondary" type="button" disabled={!videoInfo} onClick={setAudioStartFromCurrent}>
+              <SkipBack size={16} />
+              设为开始
+            </button>
+            <button className="small-button secondary" type="button" disabled={!videoInfo} onClick={setAudioEndFromCurrent}>
+              <Clock3 size={16} />
+              设为结束
+            </button>
+          </div>
+          <div className="range-value">当前 {currentTimeLabel}</div>
         </section>
 
         <section className="panel-section audio-panel">
@@ -1941,6 +2033,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 key={item}
                 className={`format-option ${format === item ? "active" : ""}`}
                 type="button"
+                aria-pressed={format === item}
                 onClick={() => {
                   setFormat(item);
                   setResult(null);
@@ -1950,7 +2043,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
               </button>
             ))}
           </div>
-          <button className="wide-button" disabled={!canExtract} onClick={() => void extractAudio()}>
+          <button className="wide-button" type="button" disabled={!canExtract} onClick={() => void extractAudio()}>
             {busy === "extract" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
             提取并下载
           </button>
@@ -1963,7 +2056,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
         ) : (
           <div className="hint-box">
             <Clock3 size={16} />
-            {videoInfo ? "已下载" : "尚未下载"} · {formatTimeInput(normalizedStartInput ?? 0)} - {formatTimeInput(normalizedEndInput ?? 0)}
+            {videoInfo ? "已下载" : "尚未下载"} · {formatTimeInput(normalizedStartInput ?? 0)} - {formatTimeInput(normalizedEndInput ?? 0)} · {format.toUpperCase()}
           </div>
         )}
         {result ? (
