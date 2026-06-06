@@ -39,6 +39,14 @@ class BilibiliPagesResponse(BaseModel):
     pages: list[BilibiliPageInfo]
 
 
+class BilibiliAudioExtractRequest(BaseModel):
+    bv: str = Field(min_length=3, max_length=200)
+    page: int | None = Field(default=None, ge=1, le=9999)
+    start_time: float = Field(ge=0)
+    duration: float = Field(gt=0)
+    format: Literal["mp3", "m4a", "wav"] = "mp3"
+
+
 class CropRect(BaseModel):
     x: int = Field(ge=0)
     y: int = Field(ge=0)

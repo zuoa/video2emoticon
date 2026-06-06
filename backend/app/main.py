@@ -12,9 +12,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .ffmpeg_tools import VideoProcessingError, build_gif, validate_crop
+from .ffmpeg_tools import VideoProcessingError, build_audio_clip, build_gif, validate_crop
 from .fonts import font_media_type, get_font_file, list_fonts, save_fonts
 from .models import (
+    BilibiliAudioExtractRequest,
     BilibiliPagesResponse,
     BilibiliRequest,
     ErrorResponse,
@@ -141,6 +142,34 @@ async def bilibili_video(request: BilibiliRequest) -> VideoInfo:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post(
+    "/api/audio/bilibili/extract",
+    response_model=ExportResponse,
+    responses={400: {"model": ErrorResponse}},
+)
+async def bilibili_audio_extract(request: BilibiliAudioExtractRequest) -> ExportResponse:
+    try:
+        info = await asyncio.to_thread(download_bilibili, request.bv, request.page)
+        metadata = get_video_metadata(info.id)
+        output_path = await asyncio.to_thread(
+            build_audio_clip,
+            Path(metadata["source_path"]),
+            settings.outputs_dir,
+            request.start_time,
+            request.duration,
+            request.format,
+            float(metadata["duration"]),
+        )
+    except VideoProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ExportResponse(
+        filename=output_path.name,
+        download_url=f"/api/outputs/{output_path.name}",
+        size_bytes=output_path.stat().st_size,
+    )
+
+
 @app.get("/api/videos/{video_id}/file")
 def video_file(video_id: str) -> FileResponse:
     try:
@@ -203,12 +232,21 @@ async def export_gif(request: ExportRequest) -> ExportResponse:
     return response
 
 
+def output_media_type(path: Path) -> str:
+    return {
+        ".gif": "image/gif",
+        ".m4a": "audio/mp4",
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+    }.get(path.suffix.lower(), "application/octet-stream")
+
+
 @app.get("/api/outputs/{filename}")
 def output_file(filename: str) -> FileResponse:
     path = settings.outputs_dir / filename
     if "/" in filename or "\\" in filename or not path.exists():
         raise HTTPException(status_code=404, detail="output not found")
-    return FileResponse(path, media_type="image/gif", filename=filename)
+    return FileResponse(path, media_type=output_media_type(path), filename=filename)
 
 
 if settings.frontend_dist.exists():

@@ -54,3 +54,5 @@ export interface ExportResponse {
   download_url: string;
   size_bytes: number;
 }
+
+export type AudioFormat = "mp3" | "m4a" | "wav";

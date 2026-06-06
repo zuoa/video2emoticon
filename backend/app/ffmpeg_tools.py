@@ -206,3 +206,47 @@ def build_gif(input_path: Path, output_dir: Path, request: ExportRequest, durati
 
     _optimize_gif(output_path)
     return output_path
+
+
+def build_audio_clip(
+    input_path: Path,
+    output_dir: Path,
+    start_time: float,
+    clip_duration: float,
+    output_format: str,
+    source_duration: float,
+) -> Path:
+    if clip_duration <= 0:
+        raise VideoProcessingError("audio clip duration must be greater than 0")
+    if start_time + clip_duration > source_duration + 0.05:
+        raise VideoProcessingError("time range exceeds video duration")
+    if output_format not in {"mp3", "m4a", "wav"}:
+        raise VideoProcessingError("unsupported audio format")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{uuid.uuid4().hex}.{output_format}"
+    codec_args = {
+        "mp3": ["-codec:a", "libmp3lame", "-b:a", "192k"],
+        "m4a": ["-codec:a", "aac", "-b:a", "192k"],
+        "wav": ["-codec:a", "pcm_s16le", "-ar", "44100"],
+    }[output_format]
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{start_time:.3f}",
+        "-t",
+        f"{clip_duration:.3f}",
+        "-i",
+        str(input_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ac",
+        "2",
+        *codec_args,
+        str(output_path),
+    ]
+    run_checked(command, timeout=180)
+    return output_path
