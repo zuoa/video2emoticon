@@ -15,7 +15,7 @@ from .config import settings
 from .ffmpeg_tools import VideoProcessingError, build_audio_clip, build_gif, validate_crop
 from .fonts import font_media_type, get_font_file, list_fonts, save_fonts
 from .models import (
-    BilibiliAudioExtractRequest,
+    AudioExtractRequest,
     BilibiliPagesResponse,
     BilibiliRequest,
     ErrorResponse,
@@ -143,20 +143,19 @@ async def bilibili_video(request: BilibiliRequest) -> VideoInfo:
 
 
 @app.post(
-    "/api/audio/bilibili/extract",
+    "/api/audio/extract",
     response_model=ExportResponse,
     responses={400: {"model": ErrorResponse}},
 )
-async def bilibili_audio_extract(request: BilibiliAudioExtractRequest) -> ExportResponse:
+async def audio_extract(request: AudioExtractRequest) -> ExportResponse:
     try:
-        info = await asyncio.to_thread(download_bilibili, request.bv, request.page)
-        metadata = get_video_metadata(info.id)
+        metadata = get_video_metadata(request.video_id)
         output_path = await asyncio.to_thread(
             build_audio_clip,
             Path(metadata["source_path"]),
             settings.outputs_dir,
             request.start_time,
-            request.duration,
+            request.end_time,
             request.format,
             float(metadata["duration"]),
         )

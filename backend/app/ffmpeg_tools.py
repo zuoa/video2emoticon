@@ -212,13 +212,14 @@ def build_audio_clip(
     input_path: Path,
     output_dir: Path,
     start_time: float,
-    clip_duration: float,
+    end_time: float,
     output_format: str,
     source_duration: float,
 ) -> Path:
+    clip_duration = end_time - start_time
     if clip_duration <= 0:
-        raise VideoProcessingError("audio clip duration must be greater than 0")
-    if start_time + clip_duration > source_duration + 0.05:
+        raise VideoProcessingError("end time must be greater than start time")
+    if end_time > source_duration + 0.05:
         raise VideoProcessingError("time range exceeds video duration")
     if output_format not in {"mp3", "m4a", "wav"}:
         raise VideoProcessingError("unsupported audio format")

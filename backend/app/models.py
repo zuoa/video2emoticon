@@ -39,12 +39,17 @@ class BilibiliPagesResponse(BaseModel):
     pages: list[BilibiliPageInfo]
 
 
-class BilibiliAudioExtractRequest(BaseModel):
-    bv: str = Field(min_length=3, max_length=200)
-    page: int | None = Field(default=None, ge=1, le=9999)
+class AudioExtractRequest(BaseModel):
+    video_id: str = Field(min_length=1)
     start_time: float = Field(ge=0)
-    duration: float = Field(gt=0)
+    end_time: float = Field(gt=0)
     format: Literal["mp3", "m4a", "wav"] = "mp3"
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> "AudioExtractRequest":
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be greater than start_time")
+        return self
 
 
 class CropRect(BaseModel):
