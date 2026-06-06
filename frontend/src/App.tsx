@@ -312,6 +312,25 @@ interface ToolHeaderProps {
   navigateTo: NavigateTo;
 }
 
+function ToolNav({ currentPage, navigateTo }: { currentPage: AppPage; navigateTo: NavigateTo }) {
+  return (
+    <nav className="tool-nav" aria-label="工具导航">
+      <button className={currentPage === "home" ? "active" : ""} type="button" onClick={() => navigateTo("home")}>
+        <Home size={16} />
+        主页
+      </button>
+      <button className={currentPage === "gif" ? "active" : ""} type="button" onClick={() => navigateTo("gif")}>
+        <Film size={16} />
+        GIF
+      </button>
+      <button className={currentPage === "audio" ? "active" : ""} type="button" onClick={() => navigateTo("audio")}>
+        <Music size={16} />
+        音频
+      </button>
+    </nav>
+  );
+}
+
 function ToolHeader({ currentPage, title, subtitle, icon, actions, navigateTo }: ToolHeaderProps) {
   return (
     <header className="topbar">
@@ -327,27 +346,26 @@ function ToolHeader({ currentPage, title, subtitle, icon, actions, navigateTo }:
           <p>{subtitle}</p>
         </div>
       </div>
-      <nav className="tool-nav" aria-label="工具导航">
-        <button className={currentPage === "home" ? "active" : ""} type="button" onClick={() => navigateTo("home")}>
-          <Home size={16} />
-          主页
-        </button>
-        <button className={currentPage === "gif" ? "active" : ""} type="button" onClick={() => navigateTo("gif")}>
-          <Film size={16} />
-          GIF
-        </button>
-        <button className={currentPage === "audio" ? "active" : ""} type="button" onClick={() => navigateTo("audio")}>
-          <Music size={16} />
-          音频
-        </button>
-      </nav>
+      <ToolNav currentPage={currentPage} navigateTo={navigateTo} />
       {actions ? <div className="topbar-actions">{actions}</div> : null}
     </header>
   );
 }
 
-function MadeBy() {
-  return <div className="made-by">MADE BY ZUOAJ</div>;
+function SiteFooter({ currentPage, navigateTo }: { currentPage: AppPage; navigateTo: NavigateTo }) {
+  return (
+    <footer className="site-footer">
+      <div className="footer-brand">
+        <span className="footer-mark">V2A</span>
+        <div>
+          <strong>Video to Any</strong>
+          <span>米色像素风视频工具箱</span>
+        </div>
+      </div>
+      <ToolNav currentPage={currentPage} navigateTo={navigateTo} />
+      <div className="footer-meta">MADE BY ZUOAJ</div>
+    </footer>
+  );
 }
 
 function HomePage({ navigateTo }: { navigateTo: NavigateTo }) {
@@ -394,7 +412,7 @@ function HomePage({ navigateTo }: { navigateTo: NavigateTo }) {
           </div>
         </div>
       </section>
-      <MadeBy />
+      <SiteFooter currentPage="home" navigateTo={navigateTo} />
     </main>
   );
 }
@@ -1464,7 +1482,7 @@ function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
           </div>
         </section>
       </section>
-      <MadeBy />
+      <SiteFooter currentPage="gif" navigateTo={navigateTo} />
     </main>
   );
 }
@@ -1955,7 +1973,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
           </a>
         ) : null}
       </section>
-      <MadeBy />
+      <SiteFooter currentPage="audio" navigateTo={navigateTo} />
     </main>
   );
 }
