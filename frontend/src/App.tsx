@@ -1,9 +1,9 @@
 import {
-  ArrowLeft,
   Clock3,
   Download,
   Film,
   FolderUp,
+  Home,
   Loader2,
   MousePointer2,
   Music,
@@ -17,7 +17,7 @@ import {
   Video
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type {
   AudioFormat,
   BilibiliPageInfo,
@@ -75,10 +75,17 @@ interface ParsedBilibiliInput {
   page: number | null;
 }
 
-type AppPage = "gif" | "audio";
+type AppPage = "home" | "gif" | "audio";
+type NavigateTo = (page: AppPage) => void;
 
 function pageFromHash(): AppPage {
-  return window.location.hash === "#/audio" ? "audio" : "gif";
+  if (window.location.hash === "#/gif") {
+    return "gif";
+  }
+  if (window.location.hash === "#/audio") {
+    return "audio";
+  }
+  return "home";
 }
 
 function apiUrl(path: string): string {
@@ -296,7 +303,103 @@ function triggerDownload(response: ExportResponse): void {
   anchor.remove();
 }
 
-function GifPage({ navigateToAudio }: { navigateToAudio: () => void }) {
+interface ToolHeaderProps {
+  currentPage: AppPage;
+  title: string;
+  subtitle: string;
+  icon: ReactNode;
+  actions?: ReactNode;
+  navigateTo: NavigateTo;
+}
+
+function ToolHeader({ currentPage, title, subtitle, icon, actions, navigateTo }: ToolHeaderProps) {
+  return (
+    <header className="topbar">
+      <div className="brandline">
+        <button className="brand-home" type="button" onClick={() => navigateTo("home")} aria-label="回到主页">
+          <Video size={20} />
+        </button>
+        <div className="brand-copy">
+          <div className="tool-title-row">
+            {icon}
+            <h1>{title}</h1>
+          </div>
+          <p>{subtitle}</p>
+        </div>
+      </div>
+      <nav className="tool-nav" aria-label="工具导航">
+        <button className={currentPage === "home" ? "active" : ""} type="button" onClick={() => navigateTo("home")}>
+          <Home size={16} />
+          主页
+        </button>
+        <button className={currentPage === "gif" ? "active" : ""} type="button" onClick={() => navigateTo("gif")}>
+          <Film size={16} />
+          GIF
+        </button>
+        <button className={currentPage === "audio" ? "active" : ""} type="button" onClick={() => navigateTo("audio")}>
+          <Music size={16} />
+          音频
+        </button>
+      </nav>
+      {actions ? <div className="topbar-actions">{actions}</div> : null}
+    </header>
+  );
+}
+
+function MadeBy() {
+  return <div className="made-by">MADE BY ZUOAJ</div>;
+}
+
+function HomePage({ navigateTo }: { navigateTo: NavigateTo }) {
+  return (
+    <main className="app-shell home-shell">
+      <ToolHeader
+        currentPage="home"
+        title="Video to Any"
+        subtitle="选择一个视频工具，进入独立工作台"
+        icon={<Video size={24} />}
+        navigateTo={navigateTo}
+      />
+
+      <section className="home-board">
+        <div className="home-hero">
+          <div className="pixel-badge">VIDEO TO ANY</div>
+          <h2>选择工具</h2>
+          <p>每个工具独立处理任务，共用同一套导航、缓存、输出和视觉风格。</p>
+        </div>
+        <div className="tool-grid">
+          <button className="tool-card" type="button" onClick={() => navigateTo("gif")}>
+            <span className="tool-card-icon">
+              <Film size={30} />
+            </span>
+            <span className="tool-card-title">视频转 GIF</span>
+            <span className="tool-card-copy">裁剪、字幕、变速、循环</span>
+            <span className="tool-card-action">进入</span>
+          </button>
+          <button className="tool-card" type="button" onClick={() => navigateTo("audio")}>
+            <span className="tool-card-icon">
+              <Music size={30} />
+            </span>
+            <span className="tool-card-title">BV 提取音频</span>
+            <span className="tool-card-copy">下载、试听、按时间点导出</span>
+            <span className="tool-card-action">进入</span>
+          </button>
+          <div className="tool-card disabled">
+            <span className="tool-card-icon">
+              <Repeat size={30} />
+            </span>
+            <span className="tool-card-title">更多工具</span>
+            <span className="tool-card-copy">为下一种 video to any 输出预留</span>
+            <span className="tool-card-action">待添加</span>
+          </div>
+        </div>
+      </section>
+      <MadeBy />
+    </main>
+  );
+}
+
+function GifPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [crop, setCrop] = useState<CropRect | null>(null);
   const [startTime, setStartTime] = useState(0);
@@ -926,25 +1029,19 @@ function GifPage({ navigateToAudio }: { navigateToAudio: () => void }) {
   return (
     <main className="app-shell">
       <style>{fontFaceStyles}</style>
-      <header className="topbar">
-        <div>
-          <div className="brandline">
-            <Film size={24} />
-            <h1>Video2Emoticon</h1>
-          </div>
-          <p>{videoInfo ? `${videoInfo.filename} · ${videoInfo.width}x${videoInfo.height}` : "视频转 GIF 表情工具"}</p>
-        </div>
-        <div className="topbar-actions">
-          <button className="nav-button" onClick={navigateToAudio}>
-            <Music size={18} />
-            音频工具
-          </button>
+      <ToolHeader
+        currentPage="gif"
+        title="视频转 GIF"
+        subtitle={videoInfo ? `${videoInfo.filename} · ${videoInfo.width}x${videoInfo.height}` : "制作 GIF 表情"}
+        icon={<Film size={24} />}
+        navigateTo={navigateTo}
+        actions={
           <button className="primary-button" disabled={!canExport} onClick={exportGif}>
             {busy === "export" ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
             导出 GIF
           </button>
-        </div>
-      </header>
+        }
+      />
 
       <section className="workbench">
         <aside className="control-panel">
@@ -1367,12 +1464,12 @@ function GifPage({ navigateToAudio }: { navigateToAudio: () => void }) {
           </div>
         </section>
       </section>
-      <div className="made-by">Made with ❤️ by ZUOAJ</div>
+      <MadeBy />
     </main>
   );
 }
 
-function AudioExtractorPage({ navigateToGif }: { navigateToGif: () => void }) {
+function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [bv, setBv] = useState("");
   const [bilibiliPages, setBilibiliPages] = useState<BilibiliPagesResponse | null>(null);
@@ -1639,19 +1736,14 @@ function AudioExtractorPage({ navigateToGif }: { navigateToGif: () => void }) {
 
   return (
     <main className="app-shell audio-shell">
-      <header className="topbar">
-        <div>
-          <div className="brandline">
-            <Music size={24} />
-            <h1>BV 音频片段</h1>
-          </div>
-          <p>{bilibiliStatus || "从 Bilibili BV 号提取音频片段"}</p>
-        </div>
-        <div className="topbar-actions">
-          <button className="nav-button" onClick={navigateToGif}>
-            <ArrowLeft size={18} />
-            GIF 工具
-          </button>
+      <ToolHeader
+        currentPage="audio"
+        title="BV 音频片段"
+        subtitle={bilibiliStatus || "从 Bilibili BV 号提取音频片段"}
+        icon={<Music size={24} />}
+        navigateTo={navigateTo}
+        actions={
+          <>
           <button className="nav-button" disabled={!canDownload} onClick={() => void downloadAudioSource()}>
             {busy === "download" ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
             下载视频
@@ -1660,8 +1752,9 @@ function AudioExtractorPage({ navigateToGif }: { navigateToGif: () => void }) {
             {busy === "extract" ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
             提取音频
           </button>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <section className="audio-workbench">
         <section className="panel-section audio-panel">
@@ -1862,7 +1955,7 @@ function AudioExtractorPage({ navigateToGif }: { navigateToGif: () => void }) {
           </a>
         ) : null}
       </section>
-      <div className="made-by">Made with ❤️ by ZUOAJ</div>
+      <MadeBy />
     </main>
   );
 }
@@ -1876,19 +1969,16 @@ export function App() {
     return () => window.removeEventListener("hashchange", syncPage);
   }, []);
 
-  const navigateToAudio = useCallback(() => {
-    window.location.hash = "#/audio";
-    setPage("audio");
+  const navigateTo = useCallback((nextPage: AppPage) => {
+    window.location.hash = nextPage === "home" ? "#/" : `#/${nextPage}`;
+    setPage(nextPage);
   }, []);
 
-  const navigateToGif = useCallback(() => {
-    window.location.hash = "#/";
-    setPage("gif");
-  }, []);
-
-  return page === "audio" ? (
-    <AudioExtractorPage navigateToGif={navigateToGif} />
-  ) : (
-    <GifPage navigateToAudio={navigateToAudio} />
-  );
+  if (page === "gif") {
+    return <GifPage navigateTo={navigateTo} />;
+  }
+  if (page === "audio") {
+    return <AudioExtractorPage navigateTo={navigateTo} />;
+  }
+  return <HomePage navigateTo={navigateTo} />;
 }

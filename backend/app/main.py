@@ -42,8 +42,8 @@ SOURCE_VIDEO_CLEANUP_INTERVAL_SECONDS = 60 * 60
 cleanup_task: asyncio.Task[None] | None = None
 
 app = FastAPI(
-    title="Video2Emoticon",
-    description="Create custom GIF emoticons from uploaded videos or Bilibili BV ids.",
+    title="Video to Any",
+    description="Convert uploaded videos or Bilibili BV ids into multiple output formats.",
     version="0.1.0",
 )
 
