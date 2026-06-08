@@ -158,6 +158,7 @@ async def audio_extract(request: AudioExtractRequest) -> ExportResponse:
             request.end_time,
             request.format,
             float(metadata["duration"]),
+            request.enhance,
         )
     except VideoProcessingError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

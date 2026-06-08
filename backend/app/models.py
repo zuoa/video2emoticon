@@ -44,6 +44,7 @@ class AudioExtractRequest(BaseModel):
     start_time: float = Field(ge=0)
     end_time: float = Field(gt=0)
     format: Literal["mp3", "m4a", "wav"] = "mp3"
+    enhance: bool = False
 
     @model_validator(mode="after")
     def validate_time_range(self) -> "AudioExtractRequest":

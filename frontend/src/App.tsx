@@ -1617,6 +1617,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [startTimeInput, setStartTimeInput] = useState(formatTimeInput(0));
   const [endTimeInput, setEndTimeInput] = useState(formatTimeInput(10));
   const [format, setFormat] = useState<AudioFormat>("mp3");
+  const [enhanceAudio, setEnhanceAudio] = useState(false);
   const [busy, setBusy] = useState<"pages" | "download" | "extract" | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ExportResponse | null>(null);
@@ -1814,11 +1815,12 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
           video_id: videoInfo.id,
           start_time: range.start,
           end_time: range.end,
-          format
+          format,
+          enhance: enhanceAudio
         })
       }).then(readJson<ExportResponse>);
       setResult(response);
-      bilibiliSource.setStatus(`已提取 ${videoInfo.filename} · ${format.toUpperCase()}`);
+      bilibiliSource.setStatus(`已提取 ${videoInfo.filename} · ${format.toUpperCase()}${enhanceAudio ? " · 已增强" : ""}`);
       triggerDownload(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : "音频提取失败");
@@ -2046,9 +2048,20 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 </button>
               ))}
             </div>
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={enhanceAudio}
+                onChange={(event) => {
+                  setEnhanceAudio(event.target.checked);
+                  setResult(null);
+                }}
+              />
+              增强
+            </label>
             <button className="wide-button" type="button" disabled={!canExtract} onClick={() => void extractAudio()}>
               {busy === "extract" ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-              提取并下载
+              {enhanceAudio ? "增强并下载" : "提取并下载"}
             </button>
           </section>
 
@@ -2058,7 +2071,7 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
             ) : (
               <div className="hint-box">
                 <Clock3 size={16} />
-                {videoInfo ? "已下载" : "尚未下载"} · {formatTimeInput(normalizedStartInput ?? 0)} - {formatTimeInput(normalizedEndInput ?? 0)} · {format.toUpperCase()}
+                {videoInfo ? "已下载" : "尚未下载"} · {formatTimeInput(normalizedStartInput ?? 0)} - {formatTimeInput(normalizedEndInput ?? 0)} · {format.toUpperCase()}{enhanceAudio ? " · 增强" : ""}
               </div>
             )}
             {result ? (

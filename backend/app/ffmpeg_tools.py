@@ -5,8 +5,10 @@ import math
 import shutil
 import subprocess
 import uuid
+from contextlib import suppress
 from pathlib import Path
 
+from .audio_enhance import AudioEnhancementError, enhance_audio_file
 from .fonts import resolve_font_file
 from .models import CropRect, ExportRequest, TextLayer
 
@@ -215,6 +217,7 @@ def build_audio_clip(
     end_time: float,
     output_format: str,
     source_duration: float,
+    enhance: bool = False,
 ) -> Path:
     clip_duration = end_time - start_time
     if clip_duration <= 0:
@@ -249,5 +252,50 @@ def build_audio_clip(
         *codec_args,
         str(output_path),
     ]
-    run_checked(command, timeout=180)
+    if not enhance:
+        run_checked(command, timeout=180)
+        return output_path
+
+    raw_path = output_dir / f"{output_path.stem}.raw.wav"
+    enhanced_path = output_dir / f"{output_path.stem}.enhanced.wav"
+    raw_command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        f"{start_time:.3f}",
+        "-t",
+        f"{clip_duration:.3f}",
+        "-i",
+        str(input_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-ac",
+        "2",
+        "-codec:a",
+        "pcm_s16le",
+        "-ar",
+        "44100",
+        str(raw_path),
+    ]
+    final_command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(enhanced_path),
+        "-ac",
+        "2",
+        *codec_args,
+        str(output_path),
+    ]
+    try:
+        run_checked(raw_command, timeout=180)
+        enhance_audio_file(raw_path, enhanced_path)
+        run_checked(final_command, timeout=180)
+    except AudioEnhancementError as exc:
+        raise VideoProcessingError(str(exc)) from exc
+    finally:
+        for temporary_path in (raw_path, enhanced_path):
+            with suppress(OSError):
+                temporary_path.unlink()
     return output_path
