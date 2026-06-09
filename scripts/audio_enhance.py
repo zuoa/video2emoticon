@@ -248,13 +248,18 @@ def declip(y, threshold=0.95, iterations=50):
 # ──────────────────────────────────────────────
 # 5. 人声 EQ 增强
 # ──────────────────────────────────────────────
-def eq_enhance(y, sr):
+def eq_enhance(y, sr, strength=1.0):
     """
     针对人声频段的 EQ 调整：
     - 高通 80 Hz   → 去除低频轰鸣
     - 轻微提升 2–5 kHz → 增加清晰度/齿音
     - 轻微削减 200–400 Hz → 减少浑浊感
+
+    strength: 0~1，整体力度系数（0.5 = 效果减半，0 = 不做 EQ）
     """
+    if strength <= 0:
+        return y
+
     # 高通滤波（去低频）
     sos_hp = signal.butter(4, 80 / (sr / 2), btype='high', output='sos')
     y = signal.sosfilt(sos_hp, y)
@@ -263,13 +268,13 @@ def eq_enhance(y, sr):
     sos_mud = signal.butter(2, [200 / (sr / 2), 400 / (sr / 2)],
                             btype='band', output='sos')
     mud = signal.sosfilt(sos_mud, y)
-    y = y - 0.15 * mud  # 轻微削减
+    y = y - (0.15 * strength) * mud
 
     # 提升 2–5 kHz（人声清晰度）
     sos_pres = signal.butter(2, [2000 / (sr / 2), 5000 / (sr / 2)],
                              btype='band', output='sos')
     presence = signal.sosfilt(sos_pres, y)
-    y = y + 0.2 * presence  # 轻微提升
+    y = y + (0.2 * strength) * presence
 
     return y
 
@@ -328,7 +333,7 @@ def normalize(y, target_rms=0.15):
 # 主流程
 # ──────────────────────────────────────────────
 def process(input_path, output_path, strength='moderate', use_eq=True, use_compress=True,
-            click_sensitivity=3.0, clip_threshold=0.95, clip_iterations=50):
+            click_sensitivity=3.0, clip_threshold=0.95, clip_iterations=50, eq_strength=0.5):
     print(f"[1/7] 加载音频: {input_path}")
     y, sr = load_audio(input_path)
 
@@ -343,15 +348,15 @@ def process(input_path, output_path, strength='moderate', use_eq=True, use_compr
     print(f"[2/7] 降噪 (强度={strength}) …")
     y_mono = denoise(y_mono, sr, strength)
 
-    print(f"[3/7] 去点状电流音 (灵敏度={click_sensitivity}) …")
-    y_mono = declicker(y_mono, sensitivity=click_sensitivity, sr=sr)
-
-    print(f"[4/7] 削波修复/破音处理 (阈值={clip_threshold}) …")
+    print(f"[3/7] 削波修复/破音处理 (阈值={clip_threshold}) …")
     y_mono = declip(y_mono, threshold=clip_threshold, iterations=clip_iterations)
 
+    print(f"[4/7] 去点状电流音 (灵敏度={click_sensitivity}) …")
+    y_mono = declicker(y_mono, sensitivity=click_sensitivity, sr=sr)
+
     if use_eq:
-        print("[5/7] EQ 人声增强 …")
-        y_mono = eq_enhance(y_mono, sr)
+        print(f"[5/7] EQ 人声增强 (力度={eq_strength}) …")
+        y_mono = eq_enhance(y_mono, sr, strength=eq_strength)
     else:
         print("[5/7] EQ 已跳过")
 
@@ -389,6 +394,8 @@ def main():
     parser.add_argument('--clip-iterations', type=int, default=50,
                         help='削波修复迭代次数 (默认: 50，破音严重时可调高到 100)')
     parser.add_argument('--no-eq', action='store_true', help='跳过 EQ 增强')
+    parser.add_argument('--eq-strength', type=float, default=0.5,
+                        help='EQ 增强力度 0~1 (默认: 0.5)')
     parser.add_argument('--no-compress', action='store_true', help='跳过动态压缩')
 
     args = parser.parse_args()
@@ -412,6 +419,7 @@ def main():
         click_sensitivity=args.click_sensitivity,
         clip_threshold=args.clip_threshold,
         clip_iterations=args.clip_iterations,
+        eq_strength=args.eq_strength,
     )
 
 

@@ -248,8 +248,8 @@ def enhance_audio_file(
         samples = samples.copy()
 
     samples = _denoise(samples, sample_rate, strength=strength)
-    samples = _declick(samples, sample_rate, sensitivity=click_sensitivity)
     samples = _declip(samples, threshold=clip_threshold, iterations=clip_iterations)
+    samples = _declick(samples, sample_rate, sensitivity=click_sensitivity)
     if use_eq:
         samples = _eq_enhance(samples, sample_rate)
     if use_compress:
