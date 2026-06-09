@@ -289,9 +289,9 @@ def build_audio_clip(
         str(output_path),
     ]
     try:
-        run_checked(raw_command, timeout=180)
+        run_checked(raw_command, timeout=600)
         enhance_audio_file(raw_path, enhanced_path)
-        run_checked(final_command, timeout=180)
+        run_checked(final_command, timeout=600)
     except AudioEnhancementError as exc:
         raise VideoProcessingError(str(exc)) from exc
     finally:
