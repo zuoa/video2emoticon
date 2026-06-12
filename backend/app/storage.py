@@ -412,7 +412,7 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
             "yt-dlp",
             "--no-playlist",
             "-f",
-            "bestvideo+bestaudio/best",
+            "bestvideo[vcodec^=avc]+bestaudio[acodec^=mp4a]/bestvideo+bestaudio/best",
             "--merge-output-format",
             "mp4",
             "-o",
