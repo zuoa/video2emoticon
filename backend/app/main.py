@@ -176,7 +176,13 @@ def video_file(video_id: str) -> FileResponse:
         path = get_video_file(video_id)
     except VideoProcessingError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return FileResponse(path)
+    media_type = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mkv": "video/x-matroska",
+        ".avi": "video/x-msvideo",
+    }.get(path.suffix.lower(), "video/mp4")
+    return FileResponse(path, media_type=media_type)
 
 
 @app.get("/api/fonts", response_model=list[FontInfo])

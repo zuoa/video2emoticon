@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import subprocess
 import threading
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -16,6 +18,8 @@ from fastapi import UploadFile
 
 from .config import settings
 from .ffmpeg_tools import VideoProcessingError, probe_video, run_checked
+
+logger = logging.getLogger(__name__)
 from .models import BilibiliPageInfo, BilibiliPagesResponse, SourceType, VideoInfo
 
 
@@ -30,6 +34,22 @@ _bilibili_download_locks_lock = threading.Lock()
 class ParsedBilibiliInput:
     bv: str
     page: int | None = None
+
+
+def _ensure_faststart(source_path: Path) -> None:
+    if source_path.suffix.lower() != ".mp4":
+        return
+    faststart_path = source_path.with_suffix(".faststart.mp4")
+    try:
+        run_checked(
+            ["ffmpeg", "-y", "-i", str(source_path), "-c", "copy", "-movflags", "+faststart", str(faststart_path)],
+            timeout=120,
+        )
+        faststart_path.replace(source_path)
+    except (VideoProcessingError, OSError):
+        logger.warning("faststart optimization failed for %s", source_path.name)
+        with suppress(OSError):
+            faststart_path.unlink()
 
 
 def _safe_extension(filename: str | None) -> str:
@@ -106,6 +126,7 @@ async def save_upload(file: UploadFile) -> VideoInfo:
             output.write(chunk)
 
     try:
+        _ensure_faststart(target_path)
         info = _video_info_from_path(video_id, SourceType.upload, filename, target_path)
     except Exception:
         shutil.rmtree(target_dir, ignore_errors=True)
@@ -436,6 +457,7 @@ def download_bilibili(value: str, page: int | None = None) -> VideoInfo:
             raise VideoProcessingError("download completed but no video file was produced")
 
         source_path = candidates[0]
+        _ensure_faststart(source_path)
         try:
             info = _video_info_from_path(video_id, SourceType.bilibili, filename, source_path)
         except Exception:
