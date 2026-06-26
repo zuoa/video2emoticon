@@ -1093,6 +1093,11 @@ input[type="color"] {
 
 /* --- BV 视频总结 --- */
 .summary-board {
+  /* Stack cards at their natural height at the top instead of letting a
+     lone card stretch to fill the viewport before data is parsed. The
+     board still grows (flex: 1 0 auto) so the footer stays pinned to the
+     bottom of the screen. */
+  align-content: start;
   display: grid;
   flex: 1 0 auto;
   gap: 18px;
