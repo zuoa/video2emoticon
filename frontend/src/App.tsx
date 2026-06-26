@@ -282,6 +282,19 @@ function formatBilibiliMultiPageStatus(bv: string, count: number): string {
   return `已识别 ${bv} 的 ${count} 个分 P，请选择后下载`;
 }
 
+// Build a filesystem-safe download name for a summary share image, preferring
+// the video title over the raw BV id. Falls back to "BV_P{page}" when the title
+// is missing or sanitizes to nothing.
+function buildSummaryFilename(title: string | null, bv: string, page: number): string {
+  const base = (title ?? "")
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[\s._]+|[\s._]+$/g, "")
+    .slice(0, 80)
+    .trim();
+  return `${base || `${bv}_P${page}`}_summary.png`;
+}
+
 function speedFactorFromLevel(level: number): number {
   if (level === 0 || Math.abs(level) === 1) {
     return 1;
@@ -2319,7 +2332,7 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
       setSharePreview(dataUrl);
       const anchor = document.createElement("a");
       anchor.href = dataUrl;
-      anchor.download = `${result.bv}_P${result.page}_summary.png`;
+      anchor.download = buildSummaryFilename(result.title, result.bv, result.page);
       anchor.style.display = "none";
       document.body.append(anchor);
       anchor.click();
@@ -2448,7 +2461,7 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
               <a
                 className="share-preview"
                 href={sharePreview}
-                download={`${result.bv}_P${result.page}_summary.png`}
+                download={buildSummaryFilename(result.title, result.bv, result.page)}
                 target="_blank"
                 rel="noreferrer"
               >
