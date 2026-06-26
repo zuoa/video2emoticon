@@ -1,6 +1,7 @@
 .DS_Store
 data/
 cookies/
+.env
 frontend/dist/
 frontend/node_modules/
 backend/**/__pycache__/
