@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS video_summaries (
     title             TEXT,
     up                TEXT,
     duration          TEXT,
+    cover_url         TEXT,
     overall_summary   TEXT    NOT NULL,
     key_points        TEXT    NOT NULL,
     quotes            TEXT    NOT NULL,
@@ -37,6 +38,10 @@ CREATE TABLE IF NOT EXISTS video_summaries (
     PRIMARY KEY (bvid, page)
 )
 """
+
+
+def _existing_columns(conn: sqlite3.Connection) -> set[str]:
+    return {row["name"] for row in conn.execute("PRAGMA table_info(video_summaries)")}
 
 
 def _db_path():
@@ -62,6 +67,10 @@ def init_db() -> None:
     try:
         with _connect() as conn:
             conn.execute(_CREATE_TABLE_SQL)
+            # Idempotent migration: older DBs predate the cover_url column.
+            # SQLite has no "ADD COLUMN IF NOT EXISTS", so guard via introspection.
+            if "cover_url" not in _existing_columns(conn):
+                conn.execute("ALTER TABLE video_summaries ADD COLUMN cover_url TEXT")
     except sqlite3.Error:
         logger.exception("Failed to initialize summary database")
 
@@ -74,6 +83,7 @@ def _row_to_payload(row: sqlite3.Row) -> dict:
         "title": row["title"],
         "up": row["up"],
         "duration": row["duration"],
+        "cover_url": row["cover_url"] or "",
         "overall_summary": row["overall_summary"],
         "key_points": json.loads(row["key_points"] or "[]"),
         "quotes": json.loads(row["quotes"] or "[]"),
@@ -117,15 +127,16 @@ def save_summary(payload: dict) -> None:
             conn.execute(
                 """
                 INSERT INTO video_summaries (
-                    bvid, page, cid, title, up, duration,
+                    bvid, page, cid, title, up, duration, cover_url,
                     overall_summary, key_points, quotes, markdown,
                     subtitle_timeline, subtitle_format, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(bvid, page) DO UPDATE SET
                     cid = excluded.cid,
                     title = excluded.title,
                     up = excluded.up,
                     duration = excluded.duration,
+                    cover_url = excluded.cover_url,
                     overall_summary = excluded.overall_summary,
                     key_points = excluded.key_points,
                     quotes = excluded.quotes,
@@ -141,6 +152,7 @@ def save_summary(payload: dict) -> None:
                     payload.get("title"),
                     payload.get("up"),
                     payload.get("duration"),
+                    payload.get("cover_url") or "",
                     payload["overall_summary"],
                     json.dumps(payload["key_points"], ensure_ascii=False),
                     json.dumps(payload["quotes"], ensure_ascii=False),

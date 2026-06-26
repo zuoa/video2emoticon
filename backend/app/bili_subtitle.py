@@ -264,6 +264,7 @@ def get_video_info(bvid: str) -> dict | None:
         "title": v.get("title", ""),
         "owner": v.get("owner", {}),
         "duration": v.get("duration"),
+        "pic": v.get("pic", ""),
         "pages": v.get("pages", []),
     }
 
@@ -305,6 +306,29 @@ def fetch_subtitle_content(subtitle_url: str) -> list[dict]:
         logger.exception("Failed to fetch subtitle content from %s", subtitle_url[:80])
         return []
     return data.get("body", []) or []
+
+
+def fetch_image_bytes(image_url: str) -> bytes:
+    """Download raw image bytes (e.g. a Bilibili cover) via the project session.
+
+    Routed through ``_get_http_session`` so the request carries the same UA,
+    ``Referer: bilibili.com`` and cookies used for the other Bilibili calls —
+    which keeps hotlink protection happy. Used by the same-origin cover proxy so
+    the frontend can draw the cover into an html2canvas without cross-origin
+    canvas tainting.
+    """
+    if not image_url:
+        raise VideoProcessingError("缺少封面图片地址")
+    url = image_url
+    if url.startswith("//"):
+        url = "https:" + url
+    try:
+        resp = _get_http_session().get(url, timeout=15)
+        resp.raise_for_status()
+        return resp.content
+    except Exception as exc:
+        logger.warning("Failed to fetch image bytes from %s: %s", url[:80], exc)
+        raise VideoProcessingError(f"封面图片下载失败：{url[:80]}") from exc
 
 
 # --- Time helpers ---
@@ -395,6 +419,7 @@ class SubtitleData:
     body: list[dict] = field(default_factory=list)
     subtitle_url: str = ""
     lan: str = ""
+    cover_url: str = ""
 
 
 class NoSubtitleError(VideoProcessingError):
@@ -451,4 +476,5 @@ def fetch_subtitle(bv: str, page: int) -> SubtitleData:
         body=body,
         subtitle_url=subtitle_url,
         lan=str(preferred.get("lan", "")),
+        cover_url=str(info.get("pic") or ""),
     )

@@ -1250,3 +1250,247 @@ input[type="color"] {
     flex-direction: column;
   }
 }
+
+/* --- Share image (off-screen card rasterized by html2canvas) --- */
+
+.share-card-offscreen {
+  left: -10000px;
+  position: fixed;
+  top: 0;
+  width: 1080px;
+  z-index: -1;
+}
+
+.share-card {
+  background: var(--paper);
+  border: 8px solid var(--ink);
+  color: var(--ink);
+  font-family:
+    "Courier New",
+    ui-monospace,
+    SFMono-Regular,
+    "PingFang SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
+    monospace;
+  overflow: hidden;
+  width: 1080px;
+}
+
+.share-cover {
+  background: var(--accent);
+  height: 560px;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.share-cover-img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.share-cover-fallback {
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+  height: 100%;
+  width: 100%;
+}
+
+.share-cover-overlay {
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.8) 0%,
+    rgba(0, 0, 0, 0.36) 38%,
+    rgba(0, 0, 0, 0) 66%
+  );
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+.share-cover-text {
+  bottom: 0;
+  left: 0;
+  padding: 44px 56px 48px;
+  position: absolute;
+  right: 0;
+}
+
+.share-cover-text h2 {
+  color: #fff1cf;
+  font-size: 54px;
+  font-weight: 800;
+  line-height: 1.25;
+  margin: 0;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+}
+
+.share-cover-meta {
+  color: #ffe9bf;
+  font-size: 26px;
+  margin-top: 16px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.share-body {
+  padding: 52px 56px 16px;
+}
+
+.share-section-title {
+  border-left: 8px solid var(--accent);
+  color: var(--accent);
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  margin-bottom: 20px;
+  padding-left: 22px;
+}
+
+.share-section-title--points {
+  border-left-color: var(--teal);
+  color: var(--teal);
+  margin-top: 44px;
+}
+
+.share-overall {
+  font-size: 31px;
+  line-height: 1.85;
+  margin: 0;
+  text-align: justify;
+}
+
+.share-keypoints {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.share-kp {
+  align-items: flex-start;
+  border-bottom: 2px dashed rgba(42, 33, 24, 0.22);
+  display: flex;
+  gap: 20px;
+  padding: 18px 0;
+}
+
+.share-kp:last-child {
+  border-bottom: none;
+}
+
+.share-kp-time {
+  background: var(--ink);
+  border-radius: 6px;
+  color: var(--paper);
+  flex: 0 0 auto;
+  font-size: 26px;
+  font-weight: 800;
+  padding: 6px 14px;
+}
+
+.share-kp-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.share-kp-title {
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.share-kp-detail {
+  color: var(--muted);
+  font-size: 25px;
+  line-height: 1.6;
+}
+
+.share-footer {
+  align-items: center;
+  background: var(--panel);
+  border-top: 6px solid var(--ink);
+  display: flex;
+  gap: 32px;
+  justify-content: space-between;
+  padding: 40px 56px 48px;
+}
+
+.share-brand {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+}
+
+.share-brand-mark {
+  align-items: center;
+  background: var(--accent);
+  border: 4px solid var(--ink);
+  color: var(--paper);
+  display: inline-flex;
+  font-size: 28px;
+  font-weight: 900;
+  height: 76px;
+  justify-content: center;
+  width: 100px;
+}
+
+.share-brand strong {
+  display: block;
+  font-size: 32px;
+  font-weight: 800;
+}
+
+.share-brand span {
+  color: var(--muted);
+  display: block;
+  font-size: 24px;
+  margin-top: 4px;
+}
+
+.share-qr {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.share-qr-img {
+  background: var(--paper);
+  border: 4px solid var(--ink);
+  display: block;
+  height: 220px;
+  width: 220px;
+}
+
+.share-qr span {
+  color: var(--muted);
+  font-size: 22px;
+}
+
+/* On-page preview of the last generated share image */
+.share-preview {
+  align-items: center;
+  border: 2px dashed var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 20px;
+  padding: 16px;
+  text-decoration: none;
+}
+
+.share-preview img {
+  border: 2px solid var(--ink);
+  display: block;
+  max-height: 320px;
+  max-width: 100%;
+  width: auto;
+}
+
+.share-preview span {
+  color: var(--muted);
+  font-size: 13px;
+}

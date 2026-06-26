@@ -1,8 +1,8 @@
 services:
   app:
-    image: ghcr.io/zuoa/video2emoticon:latest
+    image: ghcr.nju.edu.cn/zuoa/video2emoticon:latest
     ports:
-      - "8000:8000"
+      - "8005:8000"
     volumes:
       - ./data/uploads:/data/uploads
       - ./data/downloads:/data/downloads
@@ -12,13 +12,10 @@ services:
       - ./cookies:/data/cookies
     environment:
       DATA_DIR: /data
-      # Optional raw browser Cookie header:
-      # BILIBILI_COOKIE_HEADER: ${BILIBILI_COOKIE_HEADER:-}
       BILIBILI_COOKIES_FILE: /data/cookies/bilibili.cookies.txt
-      # Video summary tool (required for /#/summary to work).
-      # Set OPENAI_API_KEY in a local .env file or your shell; never commit it.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.deepseek.com}
       OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-chat}
       OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-60}
       SUMMARY_MAX_INPUT_CHARS: ${SUMMARY_MAX_INPUT_CHARS:-9000}
+      SITE_URL: ${SITE_URL:-}

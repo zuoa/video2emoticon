@@ -38,6 +38,7 @@ class Settings:
         self.openai_timeout = int(os.getenv("OPENAI_TIMEOUT", "60"))
         self.summary_max_input_chars = int(os.getenv("SUMMARY_MAX_INPUT_CHARS", "9000"))
         self.bili_rate_limit_seconds = float(os.getenv("BILI_RATE_LIMIT_SECONDS", "1.0"))
+        self.site_url = (os.getenv("SITE_URL") or "").strip().rstrip("/")
         self.font_file = self._find_font_file()
 
     def ensure_dirs(self) -> None:

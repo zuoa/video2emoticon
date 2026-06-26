@@ -8,10 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from .bili_subtitle import NoSubtitleError
+from .bili_subtitle import NoSubtitleError, fetch_image_bytes
 from .config import settings
 from .ffmpeg_tools import VideoProcessingError, build_audio_clip, build_gif, validate_crop
 from .fonts import font_media_type, get_font_file, list_fonts, save_fonts
@@ -120,6 +120,12 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/config")
+def get_config() -> dict[str, str]:
+    """Frontend-facing config (e.g. the QR landing URL for share images)."""
+    return {"site_url": settings.site_url}
+
+
 @app.post(
     "/api/videos/upload",
     response_model=VideoInfo,
@@ -218,6 +224,41 @@ def summary_subtitle(bvid: str, page: int) -> PlainTextResponse:
         content=timeline,
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _cover_media_type(cover_url: str) -> str:
+    suffix = ""
+    if "." in cover_url:
+        suffix = cover_url.rsplit(".", 1)[-1].lower().split("?", 1)[0]
+    return {
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "png": "image/png",
+        "webp": "image/webp",
+        "gif": "image/gif",
+    }.get(suffix, "image/jpeg")
+
+
+@app.get("/api/summary/cover/{bvid}/{page}")
+async def summary_cover(bvid: str, page: int) -> Response:
+    """Same-origin proxy for a video's Bilibili cover.
+
+    The cover CDN sends no CORS headers, so the frontend draws it through here to
+    avoid cross-origin canvas tainting when html2canvas rasterizes the share card.
+    """
+    summary = summary_store.get_summary(bvid, page)
+    cover_url = (summary or {}).get("cover_url") or ""
+    if not cover_url:
+        raise HTTPException(status_code=404, detail="cover not found")
+    try:
+        content = await asyncio.to_thread(fetch_image_bytes, cover_url)
+    except VideoProcessingError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type=_cover_media_type(cover_url),
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

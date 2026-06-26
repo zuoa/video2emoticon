@@ -179,6 +179,7 @@ class SummaryResponse(BaseModel):
     title: str | None = None
     up: str | None = None
     duration: str | None = None
+    cover_url: str | None = None
     overall_summary: str
     key_points: list[KeyPoint]
     quotes: list[str]

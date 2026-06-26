@@ -267,6 +267,13 @@ def _chunk_span_seconds(chunk: str) -> int | None:
 
 def _chat(prompt: str, max_tokens: int = 1200) -> str:
     client = _get_client()
+    # The OpenAI SDK appends "/chat/completions" to base_url; log the full URL
+    # so a 404 (wrong OPENAI_BASE_URL / OPENAI_MODEL) is easy to diagnose.
+    endpoint = str(client.base_url).rstrip("/") + "/chat/completions"
+    logger.warning(
+        "LLM request: POST %s | model=%s | max_tokens=%d | prompt_chars=%d",
+        endpoint, settings.openai_model, max_tokens, len(prompt),
+    )
     try:
         resp = client.chat.completions.create(
             model=settings.openai_model,
@@ -276,8 +283,13 @@ def _chat(prompt: str, max_tokens: int = 1200) -> str:
         )
         return resp.choices[0].message.content or ""
     except Exception as exc:  # noqa: BLE001 - surface as a user-facing error
-        logger.exception("LLM call failed")
-        raise VideoProcessingError(f"大模型调用失败：{exc}") from exc
+        logger.error(
+            "LLM call FAILED: POST %s | model=%s | %s", endpoint, settings.openai_model, exc
+        )
+        raise VideoProcessingError(
+            f"大模型调用失败：POST {endpoint} | model={settings.openai_model} | {exc}。"
+            "请检查 OPENAI_BASE_URL（OpenAI/中转一般需要以 /v1 结尾，DeepSeek 用 https://api.deepseek.com）与 OPENAI_MODEL。"
+        ) from exc
 
 
 def _summarize_single(timeline: str, duration_seconds: int | None, page: int, page_title: str) -> tuple[str, list, list]:
@@ -418,6 +430,7 @@ def generate_summary(bv: str, page: int) -> dict:
         "title": data.title,
         "up": data.up,
         "duration": duration_str,
+        "cover_url": data.cover_url,
         "overall_summary": overall,
         "key_points": points,
         "quotes": quotes,

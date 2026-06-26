@@ -174,6 +174,7 @@ def _sample_payload(bv: str = "BV1xx411c7mD", page: int = 1, summary: str = "整
         "title": "示例标题",
         "up": "示例UP",
         "duration": "12:34",
+        "cover_url": "https://i0.hdslb.com/sample.jpg",
         "overall_summary": summary,
         "key_points": [
             {"time": "01:06", "seconds": 66, "title": "要点", "detail": "说明", "url": "https://x?t=66"}
@@ -201,6 +202,7 @@ def test_summary_store_roundtrip(tmp_path, monkeypatch):
     assert got["key_points"] == payload["key_points"]
     assert got["quotes"] == payload["quotes"]
     assert got["cid"] == 123456
+    assert got["cover_url"] == "https://i0.hdslb.com/sample.jpg"
     assert summary_store.get_subtitle_timeline("BV1xx411c7mD", 1) == payload["subtitle_timeline"]
 
     # different page is a distinct row
@@ -243,3 +245,107 @@ def test_generate_summary_cache_hit_short_circuits_before_network(tmp_path, monk
     assert result["cached"] is True
     assert result["overall_summary"] == "已缓存的总结。"
     assert result["subtitle_url"] == "/api/summary/subtitle/BV1xx411c7mD/1"
+
+
+# --- Cover URL capture + share-image plumbing ---
+
+_OLD_TABLE_SQL = """
+CREATE TABLE video_summaries (
+    bvid              TEXT    NOT NULL,
+    page              INTEGER NOT NULL,
+    cid               INTEGER,
+    title             TEXT,
+    up                TEXT,
+    duration          TEXT,
+    overall_summary   TEXT    NOT NULL,
+    key_points        TEXT    NOT NULL,
+    quotes            TEXT    NOT NULL,
+    markdown          TEXT    NOT NULL,
+    subtitle_timeline TEXT    NOT NULL,
+    subtitle_format   TEXT    NOT NULL,
+    created_at        REAL    NOT NULL,
+    updated_at        REAL    NOT NULL,
+    PRIMARY KEY (bvid, page)
+)
+"""
+
+
+def test_init_db_migrates_cover_url_column(tmp_path, monkeypatch):
+    """An older DB created before cover_url gains the column on init_db()."""
+    monkeypatch.setattr(summary_store.settings, "summaries_dir", tmp_path)
+    with summary_store._connect() as conn:
+        conn.execute(_OLD_TABLE_SQL)
+    with summary_store._connect() as conn:
+        assert "cover_url" not in summary_store._existing_columns(conn)
+
+    summary_store.init_db()
+
+    with summary_store._connect() as conn:
+        assert "cover_url" in summary_store._existing_columns(conn)
+    # init_db() is idempotent — running again must not error on the re-add.
+    summary_store.init_db()
+
+
+def test_get_video_info_returns_cover_pic(monkeypatch):
+    class _FakeResponse:
+        def __init__(self, data):
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    class _FakeSession:
+        def __init__(self, data):
+            self._data = data
+
+        def get(self, *args, **kwargs):
+            return _FakeResponse(self._data)
+
+    payload = {
+        "code": 0,
+        "data": {
+            "cid": 1,
+            "aid": 2,
+            "title": "标题",
+            "owner": {"name": "UP主"},
+            "duration": 100,
+            "pic": "https://i0.hdslb.com/cover.jpg",
+            "pages": [],
+        },
+    }
+    monkeypatch.setattr(bili_subtitle, "_get_http_session", lambda: _FakeSession(payload))
+    monkeypatch.setattr(bili_subtitle, "_rate_limit", lambda: None)
+
+    info = bili_subtitle.get_video_info("BV1xx411c7mD")
+    assert info["pic"] == "https://i0.hdslb.com/cover.jpg"
+
+
+def test_generate_summary_payload_carries_cover_url(tmp_path, monkeypatch):
+    """A fresh (uncached) generation surfaces the cover captured from the subtitle fetch."""
+    monkeypatch.setattr(summary_store.settings, "summaries_dir", tmp_path)
+    monkeypatch.setattr(summary_service.settings, "openai_api_key", "fake-key")
+    summary_store.init_db()
+
+    fake_subtitle = bili_subtitle.SubtitleData(
+        bv="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="标题",
+        up="UP主",
+        duration_seconds=120,
+        timeline="[00:10] 一句话字幕",
+        body=[],
+        subtitle_url="",
+        lan="zh",
+        cover_url="https://i0.hdslb.com/cover.jpg",
+    )
+    monkeypatch.setattr(summary_service, "fetch_subtitle", lambda bv, page: fake_subtitle)
+    monkeypatch.setattr(
+        summary_service,
+        "_chat",
+        lambda prompt, max_tokens=1200: '{"overall_summary":"概要内容。","key_points":[],"quotes":[]}',
+    )
+
+    result = summary_service.generate_summary("BV1xx411c7mD", 1)
+    assert result["cover_url"] == "https://i0.hdslb.com/cover.jpg"
+    assert result["cached"] is False

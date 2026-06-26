@@ -72,6 +72,7 @@ export interface SummaryResponse {
   title: string | null;
   up: string | null;
   duration: string | null;
+  cover_url: string | null;
   overall_summary: string;
   key_points: KeyPoint[];
   quotes: string[];

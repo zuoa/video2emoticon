@@ -5,6 +5,7 @@ import {
   FileText,
   FolderUp,
   Home,
+  Image as ImageIcon,
   Loader2,
   MousePointer2,
   Music,
@@ -19,8 +20,10 @@ import {
   Upload,
   Video
 } from "lucide-react";
+import html2canvas from "html2canvas-pro";
+import { toDataURL as renderQrDataUrl } from "qrcode";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 import type {
   AudioFormat,
   BilibiliPageInfo,
@@ -2108,16 +2111,116 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
   );
 }
 
+const SHARE_KEYPOINT_LIMIT = 7;
+
+function waitForImages(root: HTMLElement, timeoutMs = 8000): Promise<void> {
+  const imgs = Array.from(root.querySelectorAll("img"));
+  if (imgs.length === 0) {
+    return Promise.resolve();
+  }
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const tick = () => {
+      // img.complete is true on both successful load and error, so this never
+      // hangs on a broken cover — it only waits for genuinely in-flight images.
+      if (imgs.every((img) => img.complete) || Date.now() > deadline) {
+        resolve();
+      } else {
+        window.setTimeout(tick, 60);
+      }
+    };
+    tick();
+  });
+}
+
+function ShareCard({
+  result,
+  coverSrc,
+  qrDataUrl,
+  cardRef
+}: {
+  result: SummaryResponse;
+  coverSrc: string | null;
+  qrDataUrl: string | null;
+  cardRef: Ref<HTMLDivElement>;
+}) {
+  const points = result.key_points.slice(0, SHARE_KEYPOINT_LIMIT);
+  const meta = [
+    result.up ? `UP：${result.up}` : null,
+    result.duration ? `时长：${result.duration}` : null,
+    `${result.bv} · P${result.page}`
+  ].filter(Boolean).join("　");
+
+  return (
+    <div className="share-card" ref={cardRef}>
+      <div className="share-cover">
+        {coverSrc ? (
+          <img className="share-cover-img" src={coverSrc} alt="" crossOrigin="anonymous" />
+        ) : (
+          <div className="share-cover-fallback" />
+        )}
+        <div className="share-cover-overlay" />
+        <div className="share-cover-text">
+          <h2>{result.title || `${result.bv} P${result.page}`}</h2>
+          {meta ? <div className="share-cover-meta">{meta}</div> : null}
+        </div>
+      </div>
+
+      <div className="share-body">
+        <div className="share-section-title">视频总结</div>
+        <p className="share-overall">{result.overall_summary}</p>
+
+        {points.length > 0 ? (
+          <>
+            <div className="share-section-title share-section-title--points">关键内容点</div>
+            <ol className="share-keypoints">
+              {points.map((kp, idx) => (
+                <li className="share-kp" key={`${kp.seconds}-${idx}`}>
+                  <span className="share-kp-time">[{kp.time}]</span>
+                  <div className="share-kp-body">
+                    <strong className="share-kp-title">{kp.title}</strong>
+                    {kp.detail ? <span className="share-kp-detail">{kp.detail}</span> : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : null}
+      </div>
+
+      <div className="share-footer">
+        <div className="share-brand">
+          <span className="share-brand-mark">V2A</span>
+          <div>
+            <strong>Video to Any</strong>
+            <span>视频处理工具箱</span>
+          </div>
+        </div>
+        <div className="share-qr">
+          {qrDataUrl ? <img className="share-qr-img" src={qrDataUrl} alt="二维码" /> : null}
+          <span>扫码看完整总结</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
   const [busy, setBusy] = useState<"pages" | "download" | "summary" | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<SummaryResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [sharePreview, setSharePreview] = useState<string | null>(null);
+  const shareCardRef = useRef<HTMLDivElement | null>(null);
 
   const resetResult = useCallback(() => {
     setResult(null);
     setError("");
     setCopied(false);
+    setQrDataUrl(null);
+    setSharePreview(null);
   }, []);
 
   const bilibiliSource = useBilibiliSource({
@@ -2146,6 +2249,8 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
     setError("");
     setResult(null);
     setCopied(false);
+    setQrDataUrl(null);
+    setSharePreview(null);
     try {
       const response = await fetch(apiUrl("/api/summary/generate"), {
         method: "POST",
@@ -2172,6 +2277,59 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
       setError("复制失败，请手动选择 Markdown 文本复制");
     }
   }, [result]);
+
+  const downloadShareImage = useCallback(async () => {
+    if (!result || !shareCardRef.current) {
+      return;
+    }
+    setShareBusy(true);
+    setError("");
+    try {
+      const config = await fetch(apiUrl("/api/config"))
+        .then(readJson<{ site_url: string }>)
+        .catch(() => ({ site_url: "" }));
+      const qrTarget = config.site_url || `${window.location.origin}/#/summary`;
+      const qr = await renderQrDataUrl(qrTarget, {
+        margin: 1,
+        width: 320,
+        errorCorrectionLevel: "M",
+        color: { dark: "#2a2118", light: "#fff1cf" }
+      });
+      setQrDataUrl(qr);
+      // Wait for React to commit the freshly-set QR <img> and the browser to
+      // paint before capturing — two rAFs is the standard "next paint" idiom,
+      // then waitForImages covers any cover/QR still in flight.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      if (shareCardRef.current) {
+        await waitForImages(shareCardRef.current);
+      }
+      const target = shareCardRef.current;
+      if (!target) {
+        throw new Error("分享卡片未就绪");
+      }
+      const canvas = await html2canvas(target, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#fff1cf",
+        logging: false
+      });
+      const dataUrl = canvas.toDataURL("image/png");
+      setSharePreview(dataUrl);
+      const anchor = document.createElement("a");
+      anchor.href = dataUrl;
+      anchor.download = `${result.bv}_P${result.page}_summary.png`;
+      anchor.style.display = "none";
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch (err) {
+      setError(err instanceof Error ? `生成分享图失败：${err.message}` : "生成分享图失败");
+    } finally {
+      setShareBusy(false);
+    }
+  }, [result, setError]);
 
   const downloadSubtitle = useCallback(() => {
     if (!result) {
@@ -2271,12 +2429,33 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
                 <button type="button" onClick={() => void copyMarkdown()}>
                   {copied ? "已复制" : "复制 Markdown"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void downloadShareImage()}
+                  disabled={shareBusy}
+                >
+                  {shareBusy ? <Loader2 className="spin" size={15} /> : <ImageIcon size={15} />}
+                  {shareBusy ? "生成中…" : "下载分享图"}
+                </button>
                 <button type="button" onClick={downloadSubtitle}>
                   <Download size={15} />
                   下载字幕
                 </button>
               </div>
             </div>
+
+            {sharePreview ? (
+              <a
+                className="share-preview"
+                href={sharePreview}
+                download={`${result.bv}_P${result.page}_summary.png`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <img src={sharePreview} alt="分享图预览" />
+                <span>点击重新下载分享图</span>
+              </a>
+            ) : null}
 
             <div className="summary-block">
               <div className="section-title">
@@ -2322,6 +2501,20 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
               </div>
             ) : null}
           </section>
+        ) : null}
+        {result ? (
+          <div className="share-card-offscreen" aria-hidden="true">
+            <ShareCard
+              result={result}
+              coverSrc={
+                result.cover_url
+                  ? apiUrl(`/api/summary/cover/${result.bv}/${result.page}`)
+                  : null
+              }
+              qrDataUrl={qrDataUrl}
+              cardRef={shareCardRef}
+            />
+          </div>
         ) : null}
       </section>
       <SiteFooter currentPage="summary" navigateTo={navigateTo} />
