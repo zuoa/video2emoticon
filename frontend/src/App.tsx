@@ -397,7 +397,7 @@ function SiteFooter({ currentPage, navigateTo }: { currentPage: AppPage; navigat
         <span className="footer-mark">V2A</span>
         <div>
           <strong>Video to Any</strong>
-          <span>视频处理工具箱</span>
+          <span>智能视频创作引擎</span>
         </div>
       </div>
       <ToolNav currentPage={currentPage} navigateTo={navigateTo} />
@@ -2193,7 +2193,7 @@ function ShareCard({
           <span className="share-brand-mark">V2A</span>
           <div>
             <strong>Video to Any</strong>
-            <span>视频处理工具箱</span>
+            <span>智能视频创作引擎</span>
           </div>
         </div>
         <div className="share-qr">
