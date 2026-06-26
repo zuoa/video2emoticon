@@ -1093,7 +1093,11 @@ input[type="color"] {
 
 /* --- BV 视频总结 --- */
 .summary-board {
+  display: grid;
+  flex: 1 0 auto;
   gap: 18px;
+  margin: 0 auto;
+  width: var(--content-rail);
 }
 
 .summary-error {
