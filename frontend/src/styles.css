@@ -1109,6 +1109,20 @@ input[type="color"] {
   color: var(--muted);
 }
 
+/* Compact controls — the summary form is simple, so the default
+   38/40px heights look top-heavy here. Shrink inputs and buttons. */
+.summary-shell .bv-row input,
+.summary-shell label select {
+  min-height: 34px;
+  padding: 5px 10px;
+}
+
+.summary-shell .bv-row button,
+.summary-shell .wide-button {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
 .summary-result {
   display: flex;
   flex-direction: column;
