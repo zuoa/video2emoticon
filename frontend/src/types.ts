@@ -19,6 +19,10 @@ export interface BilibiliPagesResponse {
   bv: string;
   selected_page: number;
   pages: BilibiliPageInfo[];
+  title?: string | null;
+  up?: string | null;
+  cover_url?: string | null;
+  duration?: string | null;
 }
 
 export interface CropRect {

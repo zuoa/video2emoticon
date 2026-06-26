@@ -1513,3 +1513,215 @@ input[type="color"] {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* --- Recognition card: cover/title/UP/duration shown once a BV is recognized --- */
+.summary-video-card {
+  align-items: center;
+  background: var(--panel);
+  border: 2px solid var(--ink);
+  box-shadow: 4px 4px 0 var(--ink);
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.summary-video-cover {
+  background: var(--ink);
+  flex: 0 0 150px;
+  height: 84px;
+  overflow: hidden;
+}
+
+.summary-video-cover img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.summary-video-cover-fallback {
+  align-items: center;
+  color: var(--paper);
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  width: 100%;
+}
+
+.summary-video-info {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: center;
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+.summary-video-title {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  display: -webkit-box;
+  font-size: 15px;
+  line-height: 1.35;
+  margin: 0;
+  overflow: hidden;
+}
+
+.summary-video-meta {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  gap: 4px 12px;
+}
+
+.summary-video-bv {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Generation progress popover --- */
+.summary-popover {
+  align-items: center;
+  background: rgba(42, 33, 24, 0.55);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  padding: 24px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1000;
+}
+
+.summary-popover-card {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 6px 6px 0 var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 380px;
+  padding: 22px;
+  text-align: center;
+  width: 100%;
+}
+
+.summary-popover-card h3 {
+  margin: 0;
+}
+
+.summary-popover-icon {
+  align-items: center;
+  display: flex;
+  height: 48px;
+  justify-content: center;
+  margin: 0 auto;
+  width: 48px;
+}
+
+.summary-popover-icon.working {
+  color: var(--accent);
+}
+
+.summary-popover-icon.done,
+.summary-popover-icon.error {
+  background: var(--teal);
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  color: #fff;
+}
+
+.summary-popover-icon.error {
+  background: var(--accent);
+}
+
+.summary-progress-bar {
+  background: var(--panel);
+  border: 2px solid var(--ink);
+  height: 14px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.summary-progress-fill {
+  background: var(--accent);
+  height: 100%;
+  transition: width 0.35s ease;
+}
+
+.summary-popover-msg,
+.summary-popover-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.summary-popover-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.summary-popover-actions button {
+  align-items: center;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  display: inline-flex;
+  gap: 6px;
+  padding: 8px 14px;
+}
+
+.summary-popover-actions button:hover {
+  background: var(--panel);
+}
+
+.summary-popover-actions button.primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.summary-popover-actions button.primary:hover {
+  background: var(--accent-dark);
+}
+
+/* --- Result page loading / not-found states --- */
+.summary-state {
+  align-items: center;
+  gap: 14px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.summary-state h3 {
+  margin: 0;
+}
+
+.summary-state p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.summary-state-icon {
+  color: var(--accent);
+}
+
+.summary-state-icon.error {
+  color: var(--accent-dark);
+}
+
+@media (max-width: 520px) {
+  .summary-video-cover {
+    flex-basis: 110px;
+    height: 66px;
+  }
+
+  .summary-popover-card {
+    padding: 18px;
+  }
+}

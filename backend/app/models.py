@@ -37,6 +37,14 @@ class BilibiliPagesResponse(BaseModel):
     bv: str
     selected_page: int = Field(ge=1)
     pages: list[BilibiliPageInfo]
+    # Video-level metadata surfaced at recognition time so the UI can show a
+    # cover/title/UP/duration card before generating. All optional + nullable:
+    # older callers (GIF/audio) ignore them, and they stay None when the
+    # metadata fetch fails (recognition still works via the pagelist fallback).
+    title: str | None = None
+    up: str | None = None
+    cover_url: str | None = None
+    duration: str | None = None
 
 
 class AudioExtractRequest(BaseModel):

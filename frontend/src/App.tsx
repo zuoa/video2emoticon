@@ -1,4 +1,7 @@
 import {
+  AlertCircle,
+  ArrowRight,
+  Check,
   Clock3,
   Download,
   Film,
@@ -86,6 +89,8 @@ interface ParsedBilibiliInput {
 type AppPage = "home" | "gif" | "audio" | "summary";
 type NavigateTo = (page: AppPage) => void;
 type BilibiliBusy = "pages" | "download";
+type SummaryResultRoute = { name: "summary-result"; bv: string; page: number };
+type Route = AppPage | SummaryResultRoute;
 
 interface BilibiliDownloadContext {
   bv: string;
@@ -105,15 +110,29 @@ interface UseBilibiliSourceOptions {
   downloadErrorMessage: string;
 }
 
-function pageFromHash(): AppPage {
-  if (window.location.hash === "#/gif") {
+function routeFromHash(): Route {
+  // Hash routing also supports a shareable summary result: #/summary/{bv}?p=N.
+  const raw = window.location.hash.replace(/^#/, "");
+  const queryIndex = raw.indexOf("?");
+  const path = queryIndex >= 0 ? raw.slice(0, queryIndex) : raw;
+  const query = queryIndex >= 0 ? raw.slice(queryIndex + 1) : "";
+  const segments = path.split("/").filter(Boolean);
+
+  if (segments[0] === "summary") {
+    if (segments[1]) {
+      const parsed = parseBilibiliInput(segments[1]);
+      if (parsed) {
+        const page = parsePositivePage(new URLSearchParams(query).get("p")) ?? parsed.page ?? 1;
+        return { name: "summary-result", bv: parsed.bv, page };
+      }
+    }
+    return "summary";
+  }
+  if (segments[0] === "gif") {
     return "gif";
   }
-  if (window.location.hash === "#/audio") {
+  if (segments[0] === "audio") {
     return "audio";
-  }
-  if (window.location.hash === "#/summary") {
-    return "summary";
   }
   return "home";
 }
@@ -582,6 +601,7 @@ function useBilibiliSource({
     parsedInput,
     availablePages,
     canUse,
+    recognized: pages,
     setStatus,
     updateInput,
     selectPage,
@@ -2218,23 +2238,123 @@ function ShareCard({
   );
 }
 
-function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
+function VideoCover({ src, size = 26 }: { src: string | null | undefined; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="summary-video-cover-fallback">
+        <Video size={size} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function SummaryVideoCard({
+  recognized,
+  page
+}: {
+  recognized: BilibiliPagesResponse;
+  page: number;
+}) {
+  const selectedPage = recognized.pages.find((item) => item.page === page);
+  const multiPage = recognized.pages.length > 1;
+  return (
+    <div className="summary-video-card">
+      <div className="summary-video-cover">
+        <VideoCover src={recognized.cover_url} />
+      </div>
+      <div className="summary-video-info">
+        <h3 className="summary-video-title">
+          {recognized.title || `${recognized.bv} P${page}`}
+        </h3>
+        <div className="summary-video-meta">
+          {recognized.up ? <span>UP：{recognized.up}</span> : null}
+          {recognized.duration ? <span>时长：{recognized.duration}</span> : null}
+          {multiPage && selectedPage?.title ? (
+            <span>P{page}：{selectedPage.title}</span>
+          ) : null}
+          <span className="summary-video-bv">{recognized.bv}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryPage({
+  navigateTo,
+  navigateToSummaryResult
+}: {
+  navigateTo: NavigateTo;
+  navigateToSummaryResult: (bv: string, page: number) => void;
+}) {
   const [busy, setBusy] = useState<"pages" | "download" | "summary" | null>(null);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<SummaryResponse | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [shareBusy, setShareBusy] = useState(false);
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [sharePreview, setSharePreview] = useState<string | null>(null);
-  const shareCardRef = useRef<HTMLDivElement | null>(null);
+  // Progress popover shown while generating. Progress is a simulated, eased
+  // animation capped near 92% until the request resolves, then jumps to 100% —
+  // the backend generate stays a single synchronous call, so there is no real
+  // telemetry to poll.
+  const [popover, setPopover] = useState<{
+    open: boolean;
+    progress: number;
+    stage: string;
+    done: boolean;
+    error: string;
+    bv: string;
+    page: number;
+  }>({ open: false, progress: 0, stage: "", done: false, error: "", bv: "", page: 1 });
+  const progressTimer = useRef<number | null>(null);
+
+  const stopProgress = useCallback(() => {
+    if (progressTimer.current !== null) {
+      window.clearInterval(progressTimer.current);
+      progressTimer.current = null;
+    }
+  }, []);
+
+  const stageLabel = (value: number) =>
+    value < 15 ? "正在获取字幕…" :
+    value < 70 ? "正在分段总结…" :
+    value < 92 ? "正在合并总结…" :
+    "即将完成…";
+
+  const startProgress = useCallback(() => {
+    stopProgress();
+    setPopover({ open: true, progress: 2, stage: stageLabel(2), done: false, error: "", bv: "", page: 1 });
+    progressTimer.current = window.setInterval(() => {
+      setPopover((prev) => {
+        if (!prev.open || prev.done || prev.error) {
+          return prev;
+        }
+        const next = Math.min(92, prev.progress + Math.max(0.4, (92 - prev.progress) * 0.06));
+        return { ...prev, progress: next, stage: stageLabel(next) };
+      });
+    }, 350);
+  }, [stopProgress]);
+
+  const closePopover = useCallback(() => {
+    stopProgress();
+    setPopover((prev) => ({ ...prev, open: false, done: false, error: "" }));
+  }, [stopProgress]);
 
   const resetResult = useCallback(() => {
-    setResult(null);
     setError("");
-    setCopied(false);
-    setQrDataUrl(null);
-    setSharePreview(null);
-  }, []);
+    stopProgress();
+    setPopover((prev) =>
+      prev.open ? { ...prev, open: false, done: false, error: "" } : prev
+    );
+  }, [stopProgress]);
+
+  // Clear any in-flight timer if the component unmounts mid-generation.
+  useEffect(() => () => stopProgress(), [stopProgress]);
 
   const bilibiliSource = useBilibiliSource({
     busy,
@@ -2260,102 +2380,32 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
     }
     setBusy("summary");
     setError("");
-    setResult(null);
-    setCopied(false);
-    setQrDataUrl(null);
-    setSharePreview(null);
+    startProgress();
     try {
-      const response = await fetch(apiUrl("/api/summary/generate"), {
+      await fetch(apiUrl("/api/summary/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bv: parsed.bv, page: bilibiliSource.page })
       }).then(readJson<SummaryResponse>);
-      setResult(response);
+      stopProgress();
+      setPopover((prev) => ({
+        ...prev,
+        progress: 100,
+        stage: "总结生成完成",
+        done: true,
+        error: "",
+        bv: parsed.bv,
+        page: bilibiliSource.page
+      }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "生成总结失败");
+      stopProgress();
+      const message = err instanceof Error ? err.message : "生成总结失败";
+      setError(message);
+      setPopover((prev) => ({ ...prev, done: false, error: message }));
     } finally {
       setBusy(null);
     }
-  }, [bilibiliSource.bv, bilibiliSource.page, setBusy]);
-
-  const copyMarkdown = useCallback(async () => {
-    if (!result) {
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(result.markdown);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setError("复制失败，请手动选择 Markdown 文本复制");
-    }
-  }, [result]);
-
-  const downloadShareImage = useCallback(async () => {
-    if (!result || !shareCardRef.current) {
-      return;
-    }
-    setShareBusy(true);
-    setError("");
-    try {
-      const config = await fetch(apiUrl("/api/config"))
-        .then(readJson<{ site_url: string }>)
-        .catch(() => ({ site_url: "" }));
-      const qrTarget = config.site_url || `${window.location.origin}/#/summary`;
-      const qr = await renderQrDataUrl(qrTarget, {
-        margin: 1,
-        width: 320,
-        errorCorrectionLevel: "M",
-        color: { dark: "#2a2118", light: "#fff1cf" }
-      });
-      setQrDataUrl(qr);
-      // Wait for React to commit the freshly-set QR <img> and the browser to
-      // paint before capturing — two rAFs is the standard "next paint" idiom,
-      // then waitForImages covers any cover/QR still in flight.
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-      );
-      if (shareCardRef.current) {
-        await waitForImages(shareCardRef.current);
-      }
-      const target = shareCardRef.current;
-      if (!target) {
-        throw new Error("分享卡片未就绪");
-      }
-      const canvas = await html2canvas(target, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: "#fff1cf",
-        logging: false
-      });
-      const dataUrl = canvas.toDataURL("image/png");
-      setSharePreview(dataUrl);
-      const anchor = document.createElement("a");
-      anchor.href = dataUrl;
-      anchor.download = buildSummaryFilename(result.title, result.bv, result.page);
-      anchor.style.display = "none";
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-    } catch (err) {
-      setError(err instanceof Error ? `生成分享图失败：${err.message}` : "生成分享图失败");
-    } finally {
-      setShareBusy(false);
-    }
-  }, [result, setError]);
-
-  const downloadSubtitle = useCallback(() => {
-    if (!result) {
-      return;
-    }
-    const anchor = document.createElement("a");
-    anchor.href = apiUrl(result.subtitle_url);
-    anchor.download = `${result.bv}_P${result.page}.${result.subtitle_format || "txt"}`;
-    anchor.style.display = "none";
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  }, [result]);
+  }, [bilibiliSource.bv, bilibiliSource.page, setBusy, startProgress, stopProgress]);
 
   return (
     <main className="app-shell summary-shell">
@@ -2410,6 +2460,9 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
               </select>
             </label>
           ) : null}
+          {bilibiliSource.recognized ? (
+            <SummaryVideoCard recognized={bilibiliSource.recognized} page={bilibiliSource.page} />
+          ) : null}
           <button
             className="wide-button"
             type="button"
@@ -2425,109 +2478,349 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
             提示：仅支持带 CC 字幕（人工或 AI 字幕）的视频；长视频会分段总结后合并。
           </div>
         </section>
+      </section>
 
-        {result ? (
-          <section className="panel-section summary-result">
-            <div className="summary-head">
-              <div className="summary-head-text">
-                <h3>{result.title || `${result.bv} P${result.page}`}</h3>
-                <div className="summary-meta">
-                  {result.up ? <span>UP：{result.up}</span> : null}
-                  {result.duration ? <span>时长：{result.duration}</span> : null}
-                  <span>{result.bv} · P{result.page}</span>
-                  {result.cached ? <span className="cache-tag">已缓存</span> : null}
+      {popover.open ? (
+        <div className="summary-popover" role="dialog" aria-modal="true">
+          <div className="summary-popover-card">
+            {popover.error ? (
+              <>
+                <div className="summary-popover-icon error">
+                  <AlertCircle size={28} />
                 </div>
-              </div>
-              <div className="summary-actions">
-                <button type="button" onClick={() => void copyMarkdown()}>
-                  {copied ? "已复制" : "复制 Markdown"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void downloadShareImage()}
-                  disabled={shareBusy}
-                >
-                  {shareBusy ? <Loader2 className="spin" size={15} /> : <ImageIcon size={15} />}
-                  {shareBusy ? "生成中…" : "下载分享图"}
-                </button>
-                <button type="button" onClick={downloadSubtitle}>
-                  <Download size={15} />
-                  下载字幕
-                </button>
-              </div>
+                <h3>生成失败</h3>
+                <p className="summary-popover-msg">{popover.error}</p>
+                <div className="summary-popover-actions">
+                  <button type="button" onClick={closePopover}>
+                    关闭
+                  </button>
+                </div>
+              </>
+            ) : popover.done ? (
+              <>
+                <div className="summary-popover-icon done">
+                  <Check size={28} />
+                </div>
+                <h3>总结生成完成</h3>
+                <p className="summary-popover-msg">
+                  已为 {popover.bv} P{popover.page} 生成总结，点击查看完整内容与可分享链接。
+                </p>
+                <div className="summary-popover-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => {
+                      const { bv, page } = popover;
+                      closePopover();
+                      navigateToSummaryResult(bv, page);
+                    }}
+                  >
+                    查看总结 <ArrowRight size={16} />
+                  </button>
+                  <button type="button" onClick={closePopover}>
+                    留在本页
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="summary-popover-icon working">
+                  <Loader2 className="spin" size={28} />
+                </div>
+                <h3>{popover.stage}</h3>
+                <div className="summary-progress-bar" aria-hidden="true">
+                  <div
+                    className="summary-progress-fill"
+                    style={{ width: `${popover.progress}%` }}
+                  />
+                </div>
+                <p className="summary-popover-hint">
+                  正在调用大模型，长视频可能需要数十秒，请勿关闭页面。
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
+      <SiteFooter currentPage="summary" navigateTo={navigateTo} />
+    </main>
+  );
+}
+
+function SummaryResultPage({
+  navigateTo,
+  bv,
+  page
+}: {
+  navigateTo: NavigateTo;
+  bv: string;
+  page: number;
+}) {
+  const [status, setStatus] = useState<"loading" | "ready" | "notfound">("loading");
+  const [result, setResult] = useState<SummaryResponse | null>(null);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [sharePreview, setSharePreview] = useState<string | null>(null);
+  const shareCardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStatus("loading");
+    setResult(null);
+    setError("");
+    setCopied(false);
+    setQrDataUrl(null);
+    setSharePreview(null);
+    (async () => {
+      try {
+        const response = await fetch(
+          apiUrl(`/api/summary/${bv}?page=${page}`)
+        ).then(readJson<SummaryResponse>);
+        if (!cancelled) {
+          setResult(response);
+          setStatus("ready");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "未找到该总结");
+          setStatus("notfound");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bv, page]);
+
+  const copyMarkdown = useCallback(async () => {
+    if (!result) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(result.markdown);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("复制失败，请手动选择 Markdown 文本复制");
+    }
+  }, [result]);
+
+  const downloadShareImage = useCallback(async () => {
+    if (!result || !shareCardRef.current) {
+      return;
+    }
+    setShareBusy(true);
+    setError("");
+    try {
+      const config = await fetch(apiUrl("/api/config"))
+        .then(readJson<{ site_url: string }>)
+        .catch(() => ({ site_url: "" }));
+      // QR scans to this exact shareable result page (BV + page), not the tool root.
+      const summaryPath = `/summary/${result.bv}${result.page > 1 ? `?p=${result.page}` : ""}`;
+      const qrTarget = config.site_url
+        ? `${config.site_url}/#${summaryPath}`
+        : `${window.location.origin}/#${summaryPath}`;
+      const qr = await renderQrDataUrl(qrTarget, {
+        margin: 1,
+        width: 320,
+        errorCorrectionLevel: "M",
+        color: { dark: "#2a2118", light: "#fff1cf" }
+      });
+      setQrDataUrl(qr);
+      // Wait for React to commit the freshly-set QR <img> and the browser to
+      // paint before capturing — two rAFs is the standard "next paint" idiom,
+      // then waitForImages covers any cover/QR still in flight.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+      if (shareCardRef.current) {
+        await waitForImages(shareCardRef.current);
+      }
+      const target = shareCardRef.current;
+      if (!target) {
+        throw new Error("分享卡片未就绪");
+      }
+      const canvas = await html2canvas(target, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#fff1cf",
+        logging: false
+      });
+      const dataUrl = canvas.toDataURL("image/png");
+      setSharePreview(dataUrl);
+      const anchor = document.createElement("a");
+      anchor.href = dataUrl;
+      anchor.download = buildSummaryFilename(result.title, result.bv, result.page);
+      anchor.style.display = "none";
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+    } catch (err) {
+      setError(err instanceof Error ? `生成分享图失败：${err.message}` : "生成分享图失败");
+    } finally {
+      setShareBusy(false);
+    }
+  }, [result]);
+
+  const downloadSubtitle = useCallback(() => {
+    if (!result) {
+      return;
+    }
+    const anchor = document.createElement("a");
+    anchor.href = apiUrl(result.subtitle_url);
+    anchor.download = `${result.bv}_P${result.page}.${result.subtitle_format || "txt"}`;
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [result]);
+
+  return (
+    <main className="app-shell summary-shell">
+      <ToolHeader
+        currentPage="summary"
+        title="BV 视频总结"
+        subtitle="结构化总结 · 可分享"
+        icon={<FileText size={24} />}
+        navigateTo={navigateTo}
+      />
+
+      <section className="tool-board summary-board">
+        {status === "loading" ? (
+          <section className="panel-section summary-result summary-state">
+            <div className="summary-state-icon">
+              <Loader2 className="spin" size={28} />
             </div>
-
-            {sharePreview ? (
-              <a
-                className="share-preview"
-                href={sharePreview}
-                download={buildSummaryFilename(result.title, result.bv, result.page)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <img src={sharePreview} alt="分享图预览" />
-                <span>点击重新下载分享图</span>
-              </a>
-            ) : null}
-
-            <div className="summary-block">
-              <div className="section-title">
-                <FileText size={16} />
-                <h4>视频总结</h4>
-              </div>
-              <p className="summary-overall">{result.overall_summary}</p>
-            </div>
-
-            {result.key_points.length > 0 ? (
-              <div className="summary-block">
-                <div className="section-title">
-                  <Clock3 size={16} />
-                  <h4>关键内容点</h4>
-                </div>
-                <ol className="keypoint-list">
-                  {result.key_points.map((kp, idx) => (
-                    <li key={`${kp.seconds}-${idx}`}>
-                      <a className="keypoint-time" href={kp.url} target="_blank" rel="noreferrer">
-                        [{kp.time}]
-                      </a>
-                      <div className="keypoint-body">
-                        <strong>{kp.title}</strong>
-                        {kp.detail ? <span>{kp.detail}</span> : null}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            ) : null}
-
-            {result.quotes.length > 0 ? (
-              <div className="summary-block">
-                <div className="section-title">
-                  <Quote size={16} />
-                  <h4>金句 / 知识点</h4>
-                </div>
-                <ul className="quote-list">
-                  {result.quotes.map((quote, idx) => (
-                    <li key={idx}>{quote}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
+            <p>正在加载 {bv} P{page} 的总结…</p>
           </section>
         ) : null}
-        {result ? (
-          <div className="share-card-offscreen" aria-hidden="true">
-            <ShareCard
-              result={result}
-              coverSrc={
-                result.cover_url
-                  ? apiUrl(`/api/summary/cover/${result.bv}/${result.page}`)
-                  : null
-              }
-              qrDataUrl={qrDataUrl}
-              cardRef={shareCardRef}
-            />
-          </div>
+
+        {status === "notfound" ? (
+          <section className="panel-section summary-result summary-state">
+            <div className="summary-state-icon error">
+              <AlertCircle size={28} />
+            </div>
+            <h3>暂无该视频的总结</h3>
+            <p className="summary-popover-msg">{error || `未找到 ${bv} P${page} 的总结。`}</p>
+            <div className="summary-popover-actions">
+              <button
+                type="button"
+                className="primary"
+                onClick={() => navigateTo("summary")}
+              >
+                去生成总结 <ArrowRight size={16} />
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {status === "ready" && result ? (
+          <>
+            <section className="panel-section summary-result">
+              <div className="summary-head">
+                <div className="summary-head-text">
+                  <h3>{result.title || `${result.bv} P${result.page}`}</h3>
+                  <div className="summary-meta">
+                    {result.up ? <span>UP：{result.up}</span> : null}
+                    {result.duration ? <span>时长：{result.duration}</span> : null}
+                    <span>{result.bv} · P{result.page}</span>
+                    {result.cached ? <span className="cache-tag">已缓存</span> : null}
+                  </div>
+                </div>
+                <div className="summary-actions">
+                  <button type="button" onClick={() => void copyMarkdown()}>
+                    {copied ? "已复制" : "复制 Markdown"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void downloadShareImage()}
+                    disabled={shareBusy}
+                  >
+                    {shareBusy ? <Loader2 className="spin" size={15} /> : <ImageIcon size={15} />}
+                    {shareBusy ? "生成中…" : "下载分享图"}
+                  </button>
+                  <button type="button" onClick={downloadSubtitle}>
+                    <Download size={15} />
+                    下载字幕
+                  </button>
+                  <button type="button" onClick={() => navigateTo("summary")}>
+                    生成新总结
+                  </button>
+                </div>
+              </div>
+
+              {sharePreview ? (
+                <a
+                  className="share-preview"
+                  href={sharePreview}
+                  download={buildSummaryFilename(result.title, result.bv, result.page)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <img src={sharePreview} alt="分享图预览" />
+                  <span>点击重新下载分享图</span>
+                </a>
+              ) : null}
+
+              <div className="summary-block">
+                <div className="section-title">
+                  <FileText size={16} />
+                  <h4>视频总结</h4>
+                </div>
+                <p className="summary-overall">{result.overall_summary}</p>
+              </div>
+
+              {result.key_points.length > 0 ? (
+                <div className="summary-block">
+                  <div className="section-title">
+                    <Clock3 size={16} />
+                    <h4>关键内容点</h4>
+                  </div>
+                  <ol className="keypoint-list">
+                    {result.key_points.map((kp, idx) => (
+                      <li key={`${kp.seconds}-${idx}`}>
+                        <a className="keypoint-time" href={kp.url} target="_blank" rel="noreferrer">
+                          [{kp.time}]
+                        </a>
+                        <div className="keypoint-body">
+                          <strong>{kp.title}</strong>
+                          {kp.detail ? <span>{kp.detail}</span> : null}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ) : null}
+
+              {result.quotes.length > 0 ? (
+                <div className="summary-block">
+                  <div className="section-title">
+                    <Quote size={16} />
+                    <h4>金句 / 知识点</h4>
+                  </div>
+                  <ul className="quote-list">
+                    {result.quotes.map((quote, idx) => (
+                      <li key={idx}>{quote}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+            <div className="share-card-offscreen" aria-hidden="true">
+              <ShareCard
+                result={result}
+                coverSrc={
+                  result.cover_url
+                    ? apiUrl(`/api/summary/cover/${result.bv}/${result.page}`)
+                    : null
+                }
+                qrDataUrl={qrDataUrl}
+                cardRef={shareCardRef}
+              />
+            </div>
+          </>
         ) : null}
       </section>
       <SiteFooter currentPage="summary" navigateTo={navigateTo} />
@@ -2536,27 +2829,45 @@ function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
 }
 
 export function App() {
-  const [page, setPage] = useState<AppPage>(() => pageFromHash());
+  const [route, setRoute] = useState<Route>(() => routeFromHash());
 
   useEffect(() => {
-    const syncPage = () => setPage(pageFromHash());
-    window.addEventListener("hashchange", syncPage);
-    return () => window.removeEventListener("hashchange", syncPage);
+    const syncRoute = () => setRoute(routeFromHash());
+    window.addEventListener("hashchange", syncRoute);
+    return () => window.removeEventListener("hashchange", syncRoute);
   }, []);
 
   const navigateTo = useCallback((nextPage: AppPage) => {
     window.location.hash = nextPage === "home" ? "#/" : `#/${nextPage}`;
-    setPage(nextPage);
+    setRoute(nextPage);
   }, []);
 
-  if (page === "gif") {
+  const navigateToSummaryResult = useCallback((bv: string, page: number) => {
+    const query = page > 1 ? `?p=${page}` : "";
+    window.location.hash = `#/summary/${bv}${query}`;
+    setRoute({ name: "summary-result", bv, page });
+  }, []);
+
+  // The only object route is summary-result, which still highlights the 总结 tab.
+  const currentPage: AppPage = typeof route === "string" ? route : "summary";
+
+  if (typeof route === "object" && route.name === "summary-result") {
+    return (
+      <SummaryResultPage
+        navigateTo={navigateTo}
+        bv={route.bv}
+        page={route.page}
+      />
+    );
+  }
+  if (route === "gif") {
     return <GifPage navigateTo={navigateTo} />;
   }
-  if (page === "audio") {
+  if (route === "audio") {
     return <AudioExtractorPage navigateTo={navigateTo} />;
   }
-  if (page === "summary") {
-    return <SummaryPage navigateTo={navigateTo} />;
+  if (route === "summary") {
+    return <SummaryPage navigateTo={navigateTo} navigateToSummaryResult={navigateToSummaryResult} />;
   }
   return <HomePage navigateTo={navigateTo} />;
 }

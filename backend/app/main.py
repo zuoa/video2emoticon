@@ -214,6 +214,30 @@ async def summary_generate(request: SummaryRequest) -> SummaryResponse:
     return SummaryResponse(**payload)
 
 
+@app.get(
+    "/api/summary/{bvid}",
+    response_model=SummaryResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_stored_summary(bvid: str, page: int = 1) -> SummaryResponse:
+    """Return a previously generated summary by BV (+page).
+
+    Powers the shareable result page at #/summary/{bvid}: after generation the
+    summary is persisted in summary_store, so this looks it up without
+    re-calling the LLM. Returns 404 when no summary exists yet.
+    """
+    try:
+        normalized_bv = extract_bv(bvid)
+    except VideoProcessingError:
+        normalized_bv = bvid
+    summary = summary_store.get_summary(normalized_bv, page)
+    if summary is None:
+        raise HTTPException(status_code=404, detail="未找到该视频的总结，请先在总结页生成。")
+    summary["cached"] = True
+    summary["subtitle_url"] = summary_service.subtitle_download_url(normalized_bv, page)
+    return SummaryResponse(**summary)
+
+
 @app.get("/api/summary/subtitle/{bvid}/{page}")
 def summary_subtitle(bvid: str, page: int) -> PlainTextResponse:
     timeline = summary_store.get_subtitle_timeline(bvid, page)

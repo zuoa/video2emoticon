@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 
 from fastapi import UploadFile
 
+from .bili_subtitle import format_timestamp, get_video_info
 from .config import settings
 from .ffmpeg_tools import VideoProcessingError, probe_video, run_checked
 
@@ -393,7 +394,29 @@ def list_bilibili_pages(value: str, page: int | None = None) -> BilibiliPagesRes
     if selected_page not in {item.page for item in pages}:
         raise VideoProcessingError(f"Bilibili page P{selected_page} does not exist")
 
-    return BilibiliPagesResponse(bv=bv, selected_page=selected_page, pages=pages)
+    return BilibiliPagesResponse(
+        bv=bv,
+        selected_page=selected_page,
+        pages=pages,
+        **_video_meta_for_pages(bv),
+    )
+
+
+def _video_meta_for_pages(bv: str) -> dict:
+    """Best-effort video-level metadata (title/UP/cover/duration) for the
+    recognition card. Uses the view endpoint, which returns more than the
+    pagelist endpoint. Any failure is swallowed so page recognition still works.
+    """
+    info = get_video_info(bv)
+    if not info:
+        return {}
+    duration = info.get("duration")
+    return {
+        "title": (str(info.get("title") or "").strip()) or None,
+        "up": str((info.get("owner") or {}).get("name") or "").strip() or None,
+        "cover_url": str(info.get("pic") or "").strip() or None,
+        "duration": format_timestamp(duration) if duration else None,
+    }
 
 
 def download_bilibili(value: str, page: int | None = None) -> VideoInfo:

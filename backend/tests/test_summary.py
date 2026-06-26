@@ -8,6 +8,7 @@ quote dedup, markdown-safe boilerplate stripping).
 from __future__ import annotations
 
 import hashlib
+import pytest
 from unittest.mock import patch
 from urllib.parse import urlencode
 
@@ -349,3 +350,78 @@ def test_generate_summary_payload_carries_cover_url(tmp_path, monkeypatch):
     result = summary_service.generate_summary("BV1xx411c7mD", 1)
     assert result["cover_url"] == "https://i0.hdslb.com/cover.jpg"
     assert result["cached"] is False
+
+
+# --- Recognition card enrichment + shareable GET endpoint ---
+
+def test_list_bilibili_pages_enriches_video_meta(monkeypatch):
+    """The pages response carries cover/UP/title/duration for the recognition card."""
+    from backend.app import storage
+
+    monkeypatch.setattr(
+        storage,
+        "_fetch_bilibili_pagelist",
+        lambda bv: [storage.BilibiliPageInfo(page=1, title="分P标题", duration=120.0, cid=111)],
+    )
+    monkeypatch.setattr(
+        storage,
+        "get_video_info",
+        lambda bv: {
+            "cid": 111,
+            "aid": 2,
+            "title": "视频标题",
+            "owner": {"name": "UP主"},
+            "duration": 120,
+            "pic": "https://i0.hdslb.com/cover.jpg",
+            "pages": [],
+        },
+    )
+
+    resp = storage.list_bilibili_pages("BV1xx411c7mD")
+    assert resp.bv == "BV1xx411c7mD"
+    assert [p.page for p in resp.pages] == [1]
+    assert resp.title == "视频标题"
+    assert resp.up == "UP主"
+    assert resp.cover_url == "https://i0.hdslb.com/cover.jpg"
+    assert resp.duration == "02:00"
+
+
+def test_list_bilibili_pages_meta_none_when_info_fetch_fails(monkeypatch):
+    """A failed metadata fetch must not break page recognition."""
+    from backend.app import storage
+
+    monkeypatch.setattr(
+        storage,
+        "_fetch_bilibili_pagelist",
+        lambda bv: [storage.BilibiliPageInfo(page=1, title="分P标题", duration=60.0, cid=222)],
+    )
+    monkeypatch.setattr(storage, "get_video_info", lambda bv: None)
+
+    resp = storage.list_bilibili_pages("BV1xx411c7mD")
+    assert resp.title is None and resp.up is None
+    assert resp.cover_url is None and resp.duration is None
+    assert len(resp.pages) == 1  # recognition still worked
+
+
+def test_get_stored_summary_handler_returns_payload_and_404s(tmp_path, monkeypatch):
+    """GET /api/summary/{bvid} surfaces a stored summary (cached + subtitle_url)
+    and 404s when nothing is stored. Handler called directly to avoid app
+    lifespan side effects (the source-video cleanup task)."""
+    from fastapi import HTTPException
+
+    from backend.app import main, summary_store
+
+    monkeypatch.setattr(summary_store.settings, "summaries_dir", tmp_path)
+    summary_store.init_db()
+    summary_store.save_summary(_sample_payload())
+
+    resp = main.get_stored_summary("BV1xx411c7mD", 1)
+    assert resp.bv == "BV1xx411c7mD"
+    assert resp.overall_summary == "整体总结内容。"
+    assert resp.cached is True
+    assert resp.subtitle_url == "/api/summary/subtitle/BV1xx411c7mD/1"
+
+    with pytest.raises(HTTPException) as exc_info:
+        main.get_stored_summary("BV1zzzzzzzzzz", 1)
+    assert exc_info.value.status_code == 404
+
