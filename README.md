@@ -12,6 +12,7 @@
 - 支持单个基础文字层：内容、位置、字号、颜色、描边、背景框。
 - 支持循环或非循环 GIF。
 - 独立音频工具页 `/#/audio` 支持输入 BV 号 / Bilibili URL、选择分 P、先下载视频、设置开始和结束时间、试听片段，可选择音频增强，并导出 `mp3`、`m4a` 或 `wav` 音频片段。
+- 视频总结工具页 `/#/summary` 输入 BV 号 / Bilibili URL、选择分 P，自动拉取该视频完整的 CC 字幕，用大模型生成结构化总结：整体总结、带时间点的关键内容点（可点击跳转到对应时间）、金句/知识点提炼，支持一键复制 Markdown、下载完整字幕文件。长视频会分段总结后再合并，避免截断丢失内容。仅支持带 CC 字幕（人工或 AI 字幕）的视频。
 - 上传和下载的原视频会保留用于连续制作多个 GIF；同一个 BV 的同一分 P 会复用本地源文件，服务会自动清理 24 小时未使用的原视频文件。
 - Docker 单容器部署，运行时文件通过 `/data` 持久化；Compose 默认映射到宿主机目录。
 
@@ -126,6 +127,11 @@ docker run -p 8000:8000 -v video2emoticon-data:/data ghcr.io/<owner>/<repo>:late
 - `BILIBILI_COOKIES_FILE`：Netscape 格式 Bilibili cookies 文件路径，推荐挂载到 `/data/cookies/bilibili.cookies.txt`。
 - `BILIBILI_COOKIE_HEADER`：浏览器请求里的原始 `Cookie` header，例如 `SESSDATA=...; bili_jct=...`。
 - `BILIBILI_COOKIES`：Netscape cookies 文件内容，适合通过部署平台 Secret 注入。
+- `OPENAI_API_KEY`：视频总结工具调用大模型用的 API Key（必填，否则总结页会返回 503）。
+- `OPENAI_BASE_URL`：大模型 OpenAI 兼容接口地址，默认 `https://api.deepseek.com`。
+- `OPENAI_MODEL`：模型名，默认 `deepseek-chat`。
+- `OPENAI_TIMEOUT`：单次大模型请求超时（秒），默认 `60`。
+- `SUMMARY_MAX_INPUT_CHARS`：总结分段时每段的字幕字符预算，默认 `9000`（越长越完整，但更慢更费 token）。
 
 ## 运行时依赖
 

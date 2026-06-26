@@ -16,6 +16,7 @@ class Settings:
         self.outputs_dir = self.data_dir / "outputs"
         self.cookies_dir = self.data_dir / "cookies"
         self.fonts_dir = self.data_dir / "fonts"
+        self.summaries_dir = self.data_dir / "summaries"
         self.bilibili_cookies_file = os.getenv("BILIBILI_COOKIES_FILE") or os.getenv(
             "BILIBILI_COOKIE_FILE"
         )
@@ -31,6 +32,12 @@ class Settings:
             for item in os.getenv("CORS_ORIGINS", "*").split(",")
             if item.strip()
         ]
+        self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
+        self.openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+        self.openai_model = os.getenv("OPENAI_MODEL", "deepseek-chat")
+        self.openai_timeout = int(os.getenv("OPENAI_TIMEOUT", "60"))
+        self.summary_max_input_chars = int(os.getenv("SUMMARY_MAX_INPUT_CHARS", "9000"))
+        self.bili_rate_limit_seconds = float(os.getenv("BILI_RATE_LIMIT_SECONDS", "1.0"))
         self.font_file = self._find_font_file()
 
     def ensure_dirs(self) -> None:
@@ -39,6 +46,7 @@ class Settings:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.cookies_dir.mkdir(parents=True, exist_ok=True)
         self.fonts_dir.mkdir(parents=True, exist_ok=True)
+        self.summaries_dir.mkdir(parents=True, exist_ok=True)
         self._write_bilibili_cookies_from_env()
 
     def prepare_bilibili_cookies_file(self) -> Path | None:

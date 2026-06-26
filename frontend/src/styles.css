@@ -1090,3 +1090,159 @@ input[type="color"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* --- BV 视频总结 --- */
+.summary-board {
+  gap: 18px;
+}
+
+.summary-error {
+  background: #f7d9d2;
+  color: var(--accent-dark);
+}
+
+.summary-hint {
+  color: var(--muted);
+}
+
+.summary-result {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.summary-head {
+  align-items: flex-start;
+  border-bottom: 2px dashed var(--ink);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  padding-bottom: 12px;
+}
+
+.summary-head-text h3 {
+  margin: 0 0 6px;
+}
+
+.summary-meta {
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 13px;
+}
+
+.cache-tag {
+  background: var(--teal);
+  border: 2px solid var(--ink);
+  color: #fff;
+  padding: 0 6px;
+}
+
+.summary-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.summary-actions button {
+  align-items: center;
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  display: inline-flex;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--paper);
+}
+
+.summary-actions button:hover {
+  background: var(--panel);
+}
+
+.summary-block .section-title {
+  margin-bottom: 8px;
+}
+
+.summary-overall {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  line-height: 1.8;
+  margin: 0;
+  padding: 14px 16px;
+  white-space: pre-wrap;
+}
+
+.keypoint-list,
+.quote-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.keypoint-list li {
+  border-left: 4px solid var(--accent);
+  display: flex;
+  gap: 12px;
+  padding: 8px 0 8px 12px;
+}
+
+.keypoint-list li + li {
+  border-top: 2px dashed var(--grid);
+}
+
+.keypoint-time {
+  background: var(--accent);
+  border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+  color: #fff;
+  flex-shrink: 0;
+  font-weight: bold;
+  height: fit-content;
+  padding: 2px 8px;
+  text-decoration: none;
+}
+
+.keypoint-time:hover {
+  background: var(--accent-dark);
+}
+
+.keypoint-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.keypoint-body strong {
+  font-size: 15px;
+}
+
+.keypoint-body span {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.quote-list li {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  position: relative;
+}
+
+.quote-list li::before {
+  color: var(--accent);
+  content: "“";
+  font-size: 20px;
+  font-weight: bold;
+  margin-right: 4px;
+}
+
+@media (max-width: 520px) {
+  .summary-head {
+    flex-direction: column;
+  }
+
+  .keypoint-list li {
+    flex-direction: column;
+  }
+}

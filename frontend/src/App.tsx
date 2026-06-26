@@ -2,16 +2,19 @@ import {
   Clock3,
   Download,
   Film,
+  FileText,
   FolderUp,
   Home,
   Loader2,
   MousePointer2,
   Music,
   Play,
+  Quote,
   RefreshCw,
   Repeat,
   Scissors,
   SkipBack,
+  Sparkles,
   Type,
   Upload,
   Video
@@ -25,6 +28,8 @@ import type {
   CropRect,
   ExportResponse,
   FontInfo,
+  KeyPoint,
+  SummaryResponse,
   TextLayer,
   VideoInfo
 } from "./types";
@@ -75,7 +80,7 @@ interface ParsedBilibiliInput {
   page: number | null;
 }
 
-type AppPage = "home" | "gif" | "audio";
+type AppPage = "home" | "gif" | "audio" | "summary";
 type NavigateTo = (page: AppPage) => void;
 type BilibiliBusy = "pages" | "download";
 
@@ -103,6 +108,9 @@ function pageFromHash(): AppPage {
   }
   if (window.location.hash === "#/audio") {
     return "audio";
+  }
+  if (window.location.hash === "#/summary") {
+    return "summary";
   }
   return "home";
 }
@@ -350,6 +358,10 @@ function ToolNav({ currentPage, navigateTo }: { currentPage: AppPage; navigateTo
         <Music size={16} />
         音频
       </button>
+      <button className={currentPage === "summary" ? "active" : ""} type="button" onClick={() => navigateTo("summary")}>
+        <FileText size={16} />
+        总结
+      </button>
     </nav>
   );
 }
@@ -594,6 +606,14 @@ function HomePage({ navigateTo }: { navigateTo: NavigateTo }) {
             </span>
             <span className="tool-card-title">BV 提取音频</span>
             <span className="tool-card-copy">下载、试听、按时间点导出</span>
+            <span className="tool-card-action">进入</span>
+          </button>
+          <button className="tool-card" type="button" onClick={() => navigateTo("summary")}>
+            <span className="tool-card-icon">
+              <FileText size={30} />
+            </span>
+            <span className="tool-card-title">BV 视频总结</span>
+            <span className="tool-card-copy">整体总结、关键时间点、金句提炼</span>
             <span className="tool-card-action">进入</span>
           </button>
           <div className="tool-card disabled">
@@ -2088,6 +2108,227 @@ function AudioExtractorPage({ navigateTo }: { navigateTo: NavigateTo }) {
   );
 }
 
+function SummaryPage({ navigateTo }: { navigateTo: NavigateTo }) {
+  const [busy, setBusy] = useState<"pages" | "download" | "summary" | null>(null);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState<SummaryResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const resetResult = useCallback(() => {
+    setResult(null);
+    setError("");
+    setCopied(false);
+  }, []);
+
+  const bilibiliSource = useBilibiliSource({
+    busy,
+    setBusy,
+    setError,
+    onInputChange: resetResult,
+    onPageChange: resetResult,
+    onBeforeDownload: resetResult,
+    onDownloaded: () => undefined,
+    selectedPageStatus: "已选择分 P，点击生成总结",
+    multiPageDetectedStatus: (bv, count) => `已识别 ${bv} 的 ${count} 个分 P，请选择后生成总结`,
+    downloadErrorMessage: "操作失败"
+  });
+
+  const canGenerate = Boolean(bilibiliSource.canUse && !busy);
+  const generating = busy === "summary";
+
+  const generate = useCallback(async () => {
+    const parsed = parseBilibiliInput(bilibiliSource.bv);
+    if (!parsed) {
+      setError("请输入 BV 号或合法的 bilibili.com/video/BV... 地址");
+      return;
+    }
+    setBusy("summary");
+    setError("");
+    setResult(null);
+    setCopied(false);
+    try {
+      const response = await fetch(apiUrl("/api/summary/generate"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bv: parsed.bv, page: bilibiliSource.page })
+      }).then(readJson<SummaryResponse>);
+      setResult(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成总结失败");
+    } finally {
+      setBusy(null);
+    }
+  }, [bilibiliSource.bv, bilibiliSource.page, setBusy]);
+
+  const copyMarkdown = useCallback(async () => {
+    if (!result) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(result.markdown);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("复制失败，请手动选择 Markdown 文本复制");
+    }
+  }, [result]);
+
+  const downloadSubtitle = useCallback(() => {
+    if (!result) {
+      return;
+    }
+    const anchor = document.createElement("a");
+    anchor.href = apiUrl(result.subtitle_url);
+    anchor.download = `${result.bv}_P${result.page}.${result.subtitle_format || "txt"}`;
+    anchor.style.display = "none";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  }, [result]);
+
+  return (
+    <main className="app-shell summary-shell">
+      <ToolHeader
+        currentPage="summary"
+        title="BV 视频总结"
+        subtitle="输入 BV 号，自动拉取 CC 字幕并生成结构化总结"
+        icon={<FileText size={24} />}
+        navigateTo={navigateTo}
+      />
+
+      <section className="tool-board summary-board">
+        <section className="panel-section">
+          <div className="section-title">
+            <Video size={18} />
+            <h2>视频来源</h2>
+          </div>
+          <div className="bv-row">
+            <input
+              value={bilibiliSource.bv}
+              placeholder="BV1... 或 bilibili 视频 URL"
+              onChange={(event) => bilibiliSource.updateInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void bilibiliSource.refreshPages();
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!bilibiliSource.canUse}
+              onClick={() => void bilibiliSource.refreshPages()}
+              aria-label="识别 Bilibili 分 P"
+            >
+              {busy === "pages" ? <Loader2 className="spin" size={17} /> : <RefreshCw size={17} />}
+              识别
+            </button>
+          </div>
+          {bilibiliSource.availablePages.length > 1 ? (
+            <label>
+              分 P
+              <select
+                value={bilibiliSource.page}
+                disabled={Boolean(busy)}
+                onChange={(event) => bilibiliSource.selectPage(Number(event.target.value))}
+              >
+                {bilibiliSource.availablePages.map((page) => (
+                  <option key={page.page} value={page.page}>
+                    {formatBilibiliPageOption(page)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button
+            className="wide-button"
+            type="button"
+            disabled={!canGenerate}
+            onClick={() => void generate()}
+          >
+            {generating ? <Loader2 className="spin" size={17} /> : <Sparkles size={17} />}
+            {generating ? "正在生成…" : "生成总结"}
+          </button>
+          {bilibiliSource.status ? <div className="metric">{bilibiliSource.status}</div> : null}
+          {error ? <div className="metric summary-error">{error}</div> : null}
+          <div className="metric summary-hint">
+            提示：仅支持带 CC 字幕（人工或 AI 字幕）的视频；长视频会分段总结后合并。
+          </div>
+        </section>
+
+        {result ? (
+          <section className="panel-section summary-result">
+            <div className="summary-head">
+              <div className="summary-head-text">
+                <h3>{result.title || `${result.bv} P${result.page}`}</h3>
+                <div className="summary-meta">
+                  {result.up ? <span>UP：{result.up}</span> : null}
+                  {result.duration ? <span>时长：{result.duration}</span> : null}
+                  <span>{result.bv} · P{result.page}</span>
+                  {result.cached ? <span className="cache-tag">已缓存</span> : null}
+                </div>
+              </div>
+              <div className="summary-actions">
+                <button type="button" onClick={() => void copyMarkdown()}>
+                  {copied ? "已复制" : "复制 Markdown"}
+                </button>
+                <button type="button" onClick={downloadSubtitle}>
+                  <Download size={15} />
+                  下载字幕
+                </button>
+              </div>
+            </div>
+
+            <div className="summary-block">
+              <div className="section-title">
+                <FileText size={16} />
+                <h4>视频总结</h4>
+              </div>
+              <p className="summary-overall">{result.overall_summary}</p>
+            </div>
+
+            {result.key_points.length > 0 ? (
+              <div className="summary-block">
+                <div className="section-title">
+                  <Clock3 size={16} />
+                  <h4>关键内容点</h4>
+                </div>
+                <ol className="keypoint-list">
+                  {result.key_points.map((kp, idx) => (
+                    <li key={`${kp.seconds}-${idx}`}>
+                      <a className="keypoint-time" href={kp.url} target="_blank" rel="noreferrer">
+                        [{kp.time}]
+                      </a>
+                      <div className="keypoint-body">
+                        <strong>{kp.title}</strong>
+                        {kp.detail ? <span>{kp.detail}</span> : null}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ) : null}
+
+            {result.quotes.length > 0 ? (
+              <div className="summary-block">
+                <div className="section-title">
+                  <Quote size={16} />
+                  <h4>金句 / 知识点</h4>
+                </div>
+                <ul className="quote-list">
+                  {result.quotes.map((quote, idx) => (
+                    <li key={idx}>{quote}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+      </section>
+      <SiteFooter currentPage="summary" navigateTo={navigateTo} />
+    </main>
+  );
+}
+
 export function App() {
   const [page, setPage] = useState<AppPage>(() => pageFromHash());
 
@@ -2107,6 +2348,9 @@ export function App() {
   }
   if (page === "audio") {
     return <AudioExtractorPage navigateTo={navigateTo} />;
+  }
+  if (page === "summary") {
+    return <SummaryPage navigateTo={navigateTo} />;
   }
   return <HomePage navigateTo={navigateTo} />;
 }

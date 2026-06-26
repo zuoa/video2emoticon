@@ -157,3 +157,32 @@ class ExportResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class SummaryRequest(BaseModel):
+    bv: str = Field(min_length=3, max_length=200)
+    page: int | None = Field(default=None, ge=1, le=9999)
+
+
+class KeyPoint(BaseModel):
+    time: str
+    seconds: int = Field(ge=0)
+    title: str
+    detail: str
+    url: str
+
+
+class SummaryResponse(BaseModel):
+    bv: str
+    page: int
+    cid: int | None = None
+    title: str | None = None
+    up: str | None = None
+    duration: str | None = None
+    overall_summary: str
+    key_points: list[KeyPoint]
+    quotes: list[str]
+    markdown: str
+    subtitle_url: str
+    subtitle_format: str
+    cached: bool

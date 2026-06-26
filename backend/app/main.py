@@ -8,9 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
+from .bili_subtitle import NoSubtitleError
 from .config import settings
 from .ffmpeg_tools import VideoProcessingError, build_audio_clip, build_gif, validate_crop
 from .fonts import font_media_type, get_font_file, list_fonts, save_fonts
@@ -22,16 +23,24 @@ from .models import (
     ExportRequest,
     ExportResponse,
     FontInfo,
+    KeyPoint,
+    SummaryRequest,
+    SummaryResponse,
     VideoInfo,
 )
 from .storage import (
     delete_old_videos,
     download_bilibili,
+    extract_bilibili_page,
+    extract_bv,
     get_video_file,
     get_video_metadata,
     list_bilibili_pages,
     save_upload,
 )
+from . import summary_service
+from . import summary_store
+from .summary_service import SummaryConfigError
 
 
 settings.ensure_dirs()
@@ -90,6 +99,11 @@ async def cleanup_old_videos_loop() -> None:
 async def start_source_video_cleanup() -> None:
     global cleanup_task
     cleanup_task = asyncio.create_task(cleanup_old_videos_loop())
+
+
+@app.on_event("startup")
+async def init_summary_store() -> None:
+    summary_store.init_db()
 
 
 @app.on_event("shutdown")
@@ -167,6 +181,43 @@ async def audio_extract(request: AudioExtractRequest) -> ExportResponse:
         filename=output_path.name,
         download_url=f"/api/outputs/{output_path.name}",
         size_bytes=output_path.stat().st_size,
+    )
+
+
+@app.post(
+    "/api/summary/generate",
+    response_model=SummaryResponse,
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
+)
+async def summary_generate(request: SummaryRequest) -> SummaryResponse:
+    try:
+        bv = extract_bv(request.bv)
+        page = request.page or extract_bilibili_page(request.bv) or 1
+    except VideoProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        payload = await asyncio.to_thread(summary_service.generate_summary, bv, page)
+    except NoSubtitleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SummaryConfigError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except VideoProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return SummaryResponse(**payload)
+
+
+@app.get("/api/summary/subtitle/{bvid}/{page}")
+def summary_subtitle(bvid: str, page: int) -> PlainTextResponse:
+    timeline = summary_store.get_subtitle_timeline(bvid, page)
+    if timeline is None:
+        raise HTTPException(status_code=404, detail="subtitle not found")
+    filename = f"{bvid}_P{page}.txt"
+    return PlainTextResponse(
+        content=timeline,
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -56,3 +56,27 @@ export interface ExportResponse {
 }
 
 export type AudioFormat = "mp3" | "m4a" | "wav";
+
+export interface KeyPoint {
+  time: string;
+  seconds: number;
+  title: string;
+  detail: string;
+  url: string;
+}
+
+export interface SummaryResponse {
+  bv: string;
+  page: number;
+  cid: number | null;
+  title: string | null;
+  up: string | null;
+  duration: string | null;
+  overall_summary: string;
+  key_points: KeyPoint[];
+  quotes: string[];
+  markdown: string;
+  subtitle_url: string;
+  subtitle_format: string;
+  cached: boolean;
+}
