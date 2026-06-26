@@ -176,7 +176,7 @@ h2 {
   box-shadow: 3px 3px 0 var(--ink);
   display: grid;
   gap: 0;
-  grid-template-columns: repeat(3, minmax(78px, auto));
+  grid-template-columns: repeat(4, minmax(78px, auto));
 }
 
 .tool-nav button {
@@ -1004,7 +1004,7 @@ input[type="color"] {
   }
 
   .tool-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .topbar-actions {
