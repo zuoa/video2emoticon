@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from .bili_subtitle import (
@@ -391,18 +392,56 @@ def subtitle_download_url(bv: str, page: int) -> str:
     return f"/api/summary/subtitle/{bv}/{page}"
 
 
+# One generation in flight per (bv, page): concurrent callers (e.g. two browser
+# tabs opening the same shareable result link) block, then return the row the
+# first caller stored instead of each running their own LLM map-reduce.
+_generation_locks: dict[tuple[str, int], threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _cached_payload(bv: str, page: int) -> dict | None:
+    """Return a stored summary decorated with cached=True + subtitle_url, or None."""
+    cached = summary_store.get_summary(bv, page)
+    if cached:
+        cached["cached"] = True
+        cached["subtitle_url"] = subtitle_download_url(bv, page)
+    return cached
+
+
 # --- Public entry point ---
 
 def generate_summary(bv: str, page: int) -> dict:
     if not settings.openai_api_key:
         raise SummaryConfigError("未配置 OPENAI_API_KEY，无法调用大模型生成总结。")
 
-    cached = summary_store.get_summary(bv, page)
+    # Fast path: lock-free cache hit.
+    cached = _cached_payload(bv, page)
     if cached:
-        cached["cached"] = True
-        cached["subtitle_url"] = subtitle_download_url(bv, page)
         return cached
 
+    # Slow path: serialize generation per (bv, page). A concurrent caller that
+    # arrived while we held the lock re-checks the cache on release and returns
+    # the now-stored row instead of re-running the LLM.
+    with _locks_guard:
+        lock = _generation_locks.setdefault((bv, page), threading.Lock())
+    try:
+        with lock:
+            cached = _cached_payload(bv, page)
+            if cached:
+                return cached
+
+            payload = _generate_uncached(bv, page)
+            summary_store.save_summary(payload)
+        return payload
+    finally:
+        # Drop the entry so the dict tracks only in-flight keys, not every BV
+        # ever requested. Waiters still hold a reference to this Lock object and
+        # finish safely; later callers hit the lock-free fast path.
+        with _locks_guard:
+            _generation_locks.pop((bv, page), None)
+
+
+def _generate_uncached(bv: str, page: int) -> dict:
     data = fetch_subtitle(bv, page)  # raises NoSubtitleError / VideoProcessingError
     duration = data.duration_seconds
     chunks = _split_timeline(data.timeline, settings.summary_max_input_chars)
@@ -423,7 +462,7 @@ def generate_summary(bv: str, page: int) -> dict:
         bv, data.page, data.title, data.up, duration_str, overall, points, quotes
     )
 
-    payload = {
+    return {
         "bv": bv,
         "page": data.page,
         "cid": data.cid,
@@ -440,5 +479,3 @@ def generate_summary(bv: str, page: int) -> dict:
         "subtitle_url": subtitle_download_url(bv, data.page),
         "cached": False,
     }
-    summary_store.save_summary(payload)
-    return payload

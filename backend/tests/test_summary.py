@@ -248,6 +248,76 @@ def test_generate_summary_cache_hit_short_circuits_before_network(tmp_path, monk
     assert result["subtitle_url"] == "/api/summary/subtitle/BV1xx411c7mD/1"
 
 
+def test_generate_summary_dedupes_concurrent_calls(tmp_path, monkeypatch):
+    """Two concurrent generate_summary() calls for the same uncached BV run the
+    subtitle fetch + LLM only once: the second blocks on the per-(bv,page) lock
+    and returns the row the first stored."""
+    import threading
+    import time
+
+    monkeypatch.setattr(summary_store.settings, "summaries_dir", tmp_path)
+    monkeypatch.setattr(summary_service.settings, "openai_api_key", "fake-key")
+    summary_store.init_db()
+
+    fetch_calls = {"n": 0}
+    chat_calls = {"n": 0}
+    counter_lock = threading.Lock()
+
+    fake_subtitle = bili_subtitle.SubtitleData(
+        bv="BV1xx411c7mD",
+        page=1,
+        cid=1,
+        title="标题",
+        up="UP主",
+        duration_seconds=120,
+        timeline="[00:10] 一句话字幕",
+        body=[],
+        subtitle_url="",
+        lan="zh",
+        cover_url="https://i0.hdslb.com/cover.jpg",
+    )
+
+    def fake_fetch(bv, page):
+        with counter_lock:
+            fetch_calls["n"] += 1
+        return fake_subtitle
+
+    def fake_chat(prompt, max_tokens=1200):
+        # Hold the generation lock briefly so the second caller is still waiting
+        # when the first finishes — this is what makes the dedupe observable.
+        time.sleep(0.1)
+        with counter_lock:
+            chat_calls["n"] += 1
+        return '{"overall_summary":"概要内容。","key_points":[],"quotes":[]}'
+
+    monkeypatch.setattr(summary_service, "fetch_subtitle", fake_fetch)
+    monkeypatch.setattr(summary_service, "_chat", fake_chat)
+
+    results: list[dict | None] = [None, None]
+    errors: list[BaseException] = []
+
+    def run(idx):
+        try:
+            results[idx] = summary_service.generate_summary("BV1xx411c7mD", 1)
+        except BaseException as exc:  # noqa: BLE001 - capture for assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    assert fetch_calls["n"] == 1   # subtitle fetched once, not twice
+    assert chat_calls["n"] == 1    # LLM called once, not twice
+    # both callers got the same summary; the waiter returned the stored row
+    assert results[0] is not None and results[1] is not None
+    assert results[0]["overall_summary"] == results[1]["overall_summary"]
+    # the lock entry is cleaned up once generation finishes
+    assert summary_service._generation_locks == {}
+
+
 # --- Cover URL capture + share-image plumbing ---
 
 _OLD_TABLE_SQL = """

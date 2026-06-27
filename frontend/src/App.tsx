@@ -2289,28 +2289,43 @@ function SummaryVideoCard({
   );
 }
 
-function SummaryPage({
-  navigateTo,
-  navigateToSummaryResult
-}: {
-  navigateTo: NavigateTo;
-  navigateToSummaryResult: (bv: string, page: number) => void;
-}) {
-  const [busy, setBusy] = useState<"pages" | "download" | "summary" | null>(null);
-  const [error, setError] = useState("");
-  // Progress popover shown while generating. Progress is a simulated, eased
-  // animation capped near 92% until the request resolves, then jumps to 100% —
-  // the backend generate stays a single synchronous call, so there is no real
-  // telemetry to poll.
-  const [popover, setPopover] = useState<{
-    open: boolean;
-    progress: number;
-    stage: string;
-    done: boolean;
-    error: string;
-    bv: string;
-    page: number;
-  }>({ open: false, progress: 0, stage: "", done: false, error: "", bv: "", page: 1 });
+type SummaryProgressState = {
+  open: boolean;
+  progress: number;
+  stage: string;
+  done: boolean;
+  error: string;
+  bv: string;
+  page: number;
+};
+
+const INITIAL_SUMMARY_PROGRESS: SummaryProgressState = {
+  open: false,
+  progress: 0,
+  stage: "",
+  done: false,
+  error: "",
+  bv: "",
+  page: 1,
+};
+
+function stageLabel(value: number): string {
+  return value < 15
+    ? "正在获取字幕…"
+    : value < 70
+      ? "正在分段总结…"
+      : value < 92
+        ? "正在合并总结…"
+        : "即将完成…";
+}
+
+// Progress popover shown while generating. Progress is a simulated, eased
+// animation capped near 92% until the request resolves, then jumps to 100% —
+// the backend generate stays a single synchronous call, so there is no real
+// telemetry to poll. Shared by SummaryPage (manual generate) and
+// SummaryResultPage (auto-generate on a fresh share link).
+function useSummaryProgress() {
+  const [popover, setPopover] = useState<SummaryProgressState>(INITIAL_SUMMARY_PROGRESS);
   const progressTimer = useRef<number | null>(null);
 
   const stopProgress = useCallback(() => {
@@ -2320,15 +2335,9 @@ function SummaryPage({
     }
   }, []);
 
-  const stageLabel = (value: number) =>
-    value < 15 ? "正在获取字幕…" :
-    value < 70 ? "正在分段总结…" :
-    value < 92 ? "正在合并总结…" :
-    "即将完成…";
-
   const startProgress = useCallback(() => {
     stopProgress();
-    setPopover({ open: true, progress: 2, stage: stageLabel(2), done: false, error: "", bv: "", page: 1 });
+    setPopover({ ...INITIAL_SUMMARY_PROGRESS, open: true, progress: 2, stage: stageLabel(2) });
     progressTimer.current = window.setInterval(() => {
       setPopover((prev) => {
         if (!prev.open || prev.done || prev.error) {
@@ -2340,21 +2349,133 @@ function SummaryPage({
     }, 350);
   }, [stopProgress]);
 
+  const markDone = useCallback(
+    (bv: string, page: number) => {
+      stopProgress();
+      setPopover((prev) => ({
+        ...prev,
+        progress: 100,
+        stage: "总结生成完成",
+        done: true,
+        error: "",
+        bv,
+        page,
+      }));
+    },
+    [stopProgress],
+  );
+
+  const markError = useCallback(
+    (message: string) => {
+      stopProgress();
+      setPopover((prev) => ({ ...prev, done: false, error: message }));
+    },
+    [stopProgress],
+  );
+
   const closePopover = useCallback(() => {
     stopProgress();
     setPopover((prev) => ({ ...prev, open: false, done: false, error: "" }));
   }, [stopProgress]);
 
-  const resetResult = useCallback(() => {
-    setError("");
-    stopProgress();
-    setPopover((prev) =>
-      prev.open ? { ...prev, open: false, done: false, error: "" } : prev
-    );
-  }, [stopProgress]);
-
   // Clear any in-flight timer if the component unmounts mid-generation.
   useEffect(() => () => stopProgress(), [stopProgress]);
+
+  return { popover, startProgress, stopProgress, markDone, markError, closePopover };
+}
+
+function SummaryProgressPopover({
+  popover,
+  onClose,
+  onViewResult
+}: {
+  popover: SummaryProgressState;
+  onClose: () => void;
+  onViewResult?: (bv: string, page: number) => void;
+}) {
+  if (!popover.open) {
+    return null;
+  }
+  return (
+    <div className="summary-popover" role="dialog" aria-modal="true">
+      <div className="summary-popover-card">
+        {popover.error ? (
+          <>
+            <div className="summary-popover-icon error">
+              <AlertCircle size={28} />
+            </div>
+            <h3>生成失败</h3>
+            <p className="summary-popover-msg">{popover.error}</p>
+            <div className="summary-popover-actions">
+              <button type="button" onClick={onClose}>
+                关闭
+              </button>
+            </div>
+          </>
+        ) : popover.done && onViewResult ? (
+          <>
+            <div className="summary-popover-icon done">
+              <Check size={28} />
+            </div>
+            <h3>总结生成完成</h3>
+            <p className="summary-popover-msg">
+              已为 {popover.bv} P{popover.page} 生成总结，点击查看完整内容与可分享链接。
+            </p>
+            <div className="summary-popover-actions">
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  const { bv, page } = popover;
+                  onClose();
+                  onViewResult(bv, page);
+                }}
+              >
+                查看总结 <ArrowRight size={16} />
+              </button>
+              <button type="button" onClick={onClose}>
+                留在本页
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="summary-popover-icon working">
+              <Loader2 className="spin" size={28} />
+            </div>
+            <h3>{popover.stage}</h3>
+            <div className="summary-progress-bar" aria-hidden="true">
+              <div
+                className="summary-progress-fill"
+                style={{ width: `${popover.progress}%` }}
+              />
+            </div>
+            <p className="summary-popover-hint">
+              正在调用大模型，长视频可能需要数十秒，请勿关闭页面。
+            </p>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SummaryPage({
+  navigateTo,
+  navigateToSummaryResult
+}: {
+  navigateTo: NavigateTo;
+  navigateToSummaryResult: (bv: string, page: number) => void;
+}) {
+  const [busy, setBusy] = useState<"pages" | "download" | "summary" | null>(null);
+  const [error, setError] = useState("");
+  const progress = useSummaryProgress();
+  const { startProgress, markDone, markError, closePopover } = progress;
+
+  const resetResult = useCallback(() => {
+    setError("");
+    closePopover();
+  }, [closePopover]);
 
   const bilibiliSource = useBilibiliSource({
     busy,
@@ -2387,25 +2508,15 @@ function SummaryPage({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bv: parsed.bv, page: bilibiliSource.page })
       }).then(readJson<SummaryResponse>);
-      stopProgress();
-      setPopover((prev) => ({
-        ...prev,
-        progress: 100,
-        stage: "总结生成完成",
-        done: true,
-        error: "",
-        bv: parsed.bv,
-        page: bilibiliSource.page
-      }));
+      markDone(parsed.bv, bilibiliSource.page);
     } catch (err) {
-      stopProgress();
       const message = err instanceof Error ? err.message : "生成总结失败";
       setError(message);
-      setPopover((prev) => ({ ...prev, done: false, error: message }));
+      markError(message);
     } finally {
       setBusy(null);
     }
-  }, [bilibiliSource.bv, bilibiliSource.page, setBusy, startProgress, stopProgress]);
+  }, [bilibiliSource.bv, bilibiliSource.page, setBusy, startProgress, markDone, markError]);
 
   return (
     <main className="app-shell summary-shell">
@@ -2480,68 +2591,11 @@ function SummaryPage({
         </section>
       </section>
 
-      {popover.open ? (
-        <div className="summary-popover" role="dialog" aria-modal="true">
-          <div className="summary-popover-card">
-            {popover.error ? (
-              <>
-                <div className="summary-popover-icon error">
-                  <AlertCircle size={28} />
-                </div>
-                <h3>生成失败</h3>
-                <p className="summary-popover-msg">{popover.error}</p>
-                <div className="summary-popover-actions">
-                  <button type="button" onClick={closePopover}>
-                    关闭
-                  </button>
-                </div>
-              </>
-            ) : popover.done ? (
-              <>
-                <div className="summary-popover-icon done">
-                  <Check size={28} />
-                </div>
-                <h3>总结生成完成</h3>
-                <p className="summary-popover-msg">
-                  已为 {popover.bv} P{popover.page} 生成总结，点击查看完整内容与可分享链接。
-                </p>
-                <div className="summary-popover-actions">
-                  <button
-                    type="button"
-                    className="primary"
-                    onClick={() => {
-                      const { bv, page } = popover;
-                      closePopover();
-                      navigateToSummaryResult(bv, page);
-                    }}
-                  >
-                    查看总结 <ArrowRight size={16} />
-                  </button>
-                  <button type="button" onClick={closePopover}>
-                    留在本页
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="summary-popover-icon working">
-                  <Loader2 className="spin" size={28} />
-                </div>
-                <h3>{popover.stage}</h3>
-                <div className="summary-progress-bar" aria-hidden="true">
-                  <div
-                    className="summary-progress-fill"
-                    style={{ width: `${popover.progress}%` }}
-                  />
-                </div>
-                <p className="summary-popover-hint">
-                  正在调用大模型，长视频可能需要数十秒，请勿关闭页面。
-                </p>
-              </>
-            )}
-          </div>
-        </div>
-      ) : null}
+      <SummaryProgressPopover
+        popover={progress.popover}
+        onClose={closePopover}
+        onViewResult={navigateToSummaryResult}
+      />
       <SiteFooter currentPage="summary" navigateTo={navigateTo} />
     </main>
   );
@@ -2556,14 +2610,20 @@ function SummaryResultPage({
   bv: string;
   page: number;
 }) {
-  const [status, setStatus] = useState<"loading" | "ready" | "notfound">("loading");
+  const [status, setStatus] = useState<"loading" | "generating" | "ready" | "error">(
+    "loading",
+  );
   const [result, setResult] = useState<SummaryResponse | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [sharePreview, setSharePreview] = useState<string | null>(null);
+  // Bumped by the retry button to re-run the load+auto-generate effect.
+  const [retryKey, setRetryKey] = useState(0);
   const shareCardRef = useRef<HTMLDivElement | null>(null);
+  const progress = useSummaryProgress();
+  const { startProgress, closePopover } = progress;
 
   useEffect(() => {
     let cancelled = false;
@@ -2575,24 +2635,52 @@ function SummaryResultPage({
     setSharePreview(null);
     (async () => {
       try {
-        const response = await fetch(
-          apiUrl(`/api/summary/${bv}?page=${page}`)
-        ).then(readJson<SummaryResponse>);
+        const response = await fetch(apiUrl(`/api/summary/${bv}?page=${page}`));
+        // No cached summary for this share link: auto-generate it so a visitor
+        // pasting the URL gets the result without leaving the page. The backend
+        // dedupes concurrent generations of the same BV.
+        if (response.status === 404) {
+          if (cancelled) {
+            return;
+          }
+          setStatus("generating");
+          startProgress();
+          try {
+            const generated = await fetch(apiUrl("/api/summary/generate"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ bv, page })
+            }).then(readJson<SummaryResponse>);
+            if (!cancelled) {
+              closePopover();
+              setResult(generated);
+              setStatus("ready");
+            }
+          } catch (genErr) {
+            if (!cancelled) {
+              closePopover();
+              setError(genErr instanceof Error ? genErr.message : "自动生成总结失败");
+              setStatus("error");
+            }
+          }
+          return;
+        }
+        const data = await readJson<SummaryResponse>(response); // throws on non-ok
         if (!cancelled) {
-          setResult(response);
+          setResult(data);
           setStatus("ready");
         }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "未找到该总结");
-          setStatus("notfound");
+          setStatus("error");
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [bv, page]);
+  }, [bv, page, retryKey, startProgress, closePopover]);
 
   const copyMarkdown = useCallback(async () => {
     if (!result) {
@@ -2697,19 +2785,34 @@ function SummaryResultPage({
           </section>
         ) : null}
 
-        {status === "notfound" ? (
+        {status === "generating" ? (
+          <section className="panel-section summary-result summary-state">
+            <div className="summary-state-icon">
+              <Loader2 className="spin" size={28} />
+            </div>
+            <h3>未找到缓存的总结</h3>
+            <p>正在自动为 {bv} P{page} 生成总结，长视频可能需要数十秒，请勿关闭页面。</p>
+          </section>
+        ) : null}
+
+        {status === "error" ? (
           <section className="panel-section summary-result summary-state">
             <div className="summary-state-icon error">
               <AlertCircle size={28} />
             </div>
-            <h3>暂无该视频的总结</h3>
-            <p className="summary-popover-msg">{error || `未找到 ${bv} P${page} 的总结。`}</p>
+            <h3>{error ? "自动生成失败" : "暂无该视频的总结"}</h3>
+            <p className="summary-popover-msg">
+              {error || `未找到 ${bv} P${page} 的总结。`}
+            </p>
             <div className="summary-popover-actions">
               <button
                 type="button"
                 className="primary"
-                onClick={() => navigateTo("summary")}
+                onClick={() => setRetryKey((key) => key + 1)}
               >
+                重试
+              </button>
+              <button type="button" onClick={() => navigateTo("summary")}>
                 去生成总结 <ArrowRight size={16} />
               </button>
             </div>
@@ -2823,6 +2926,7 @@ function SummaryResultPage({
           </>
         ) : null}
       </section>
+      <SummaryProgressPopover popover={progress.popover} onClose={closePopover} />
       <SiteFooter currentPage="summary" navigateTo={navigateTo} />
     </main>
   );
