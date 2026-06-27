@@ -436,7 +436,12 @@ def fetch_subtitle(bv: str, page: int) -> SubtitleData:
     if not cid:
         raise VideoProcessingError(f"无法解析分 P 的 cid：{bv} P{page}")
 
-    title = (str(page_dict.get("part") or "").strip()) or str(info.get("title") or "")
+    # Prefer the video-level title over the per-P "part" name. The part is
+    # often an auto-generated segment label (or even a bare timestamp on
+    # time-segmented videos) — surfacing it as the summary title reads as a bug
+    # and disagrees with the recognition card, which uses the video title.
+    # The P number still distinguishes multi-P videos in the UI.
+    title = str(info.get("title") or "").strip() or str(page_dict.get("part") or "").strip()
     up = str((info.get("owner") or {}).get("name") or "")
     duration_seconds = page_dict.get("duration") or info.get("duration")
     duration_seconds = _safe_int(duration_seconds) or None

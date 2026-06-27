@@ -352,6 +352,42 @@ def test_generate_summary_payload_carries_cover_url(tmp_path, monkeypatch):
     assert result["cached"] is False
 
 
+def test_fetch_subtitle_prefers_video_title_over_part_name():
+    """The summary title is the video-level title, not the per-P "part" name —
+    which on time-segmented videos is a bare timestamp that would render as the
+    title on the result page."""
+    with (
+        patch.object(bili_subtitle, "_rate_limit", lambda: None),
+        patch.object(
+            bili_subtitle,
+            "get_video_info",
+            lambda bv: {
+                "cid": 1,
+                "aid": 2,
+                "title": "视频标题",
+                "owner": {"name": "UP主"},
+                "duration": 120,
+                "pic": "cover.jpg",
+                "pages": [{"page": 1, "part": "00:15:30", "cid": 1, "duration": 120}],
+            },
+        ),
+        patch.object(
+            bili_subtitle,
+            "get_subtitle_urls",
+            lambda bv, cid: [{"lan": "zh", "subtitle_url": "//x.json"}],
+        ),
+        patch.object(
+            bili_subtitle,
+            "fetch_subtitle_content",
+            lambda url: [{"from": 0, "content": "你好"}],
+        ),
+    ):
+        data = bili_subtitle.fetch_subtitle("BV1xx411c7mD", 1)
+
+    assert data.title == "视频标题"  # not the part "00:15:30"
+    assert data.up == "UP主"
+
+
 # --- Recognition card enrichment + shareable GET endpoint ---
 
 def test_list_bilibili_pages_enriches_video_meta(monkeypatch):
